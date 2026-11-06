@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Kana 桌面自定义快捷键",
-    "description": "录制开发者工具、正文/输入框聚焦及会话速切快捷键，并用 Ctrl+数字切换功能页；仅在 Desktop 增强模式主界面生效。"
+    "title": "Remu 自定义快捷键",
+    "description": "为官方与社区 DSH Desktop 录制会话、聚焦和功能页快捷键；普通 DSH Web 暂不启用。"
   }
 }

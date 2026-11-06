@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Kana Desktop Shortcuts",
-    "description": "Record shortcuts for DevTools, conversation content/composer focus and recent sessions; switch function panels with Ctrl+digits in Desktop enhanced mode."
+    "title": "Remu Custom Shortcuts",
+    "description": "Configure conversation, focus and panel shortcuts for official and community DSH Desktop; plain DSH Web is not enabled."
   }
 }

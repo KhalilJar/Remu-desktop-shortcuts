@@ -1,9 +1,9 @@
 {
   "name": "kana-desktop-shortcuts",
-  "version": "0.3.1",
+  "version": "0.4.3",
   "private": true,
   "type": "module",
-  "description": "Desktop-only configurable shortcuts with a dedicated settings page",
+  "description": "Configurable shortcuts for official and community DSH Desktop content pages",
   "exports": {
     ".": "./host.js",
     "./client": "./client.js",

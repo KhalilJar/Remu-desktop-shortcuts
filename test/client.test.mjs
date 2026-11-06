@@ -5,7 +5,7 @@ import { runInNewContext } from 'node:vm';
 
 const source = await readFile(new URL('../client.js', import.meta.url), 'utf8');
 
-function load({ mode = 'advanced', runtime = 'desktop', platform = 'windows', bridge = true } = {}) {
+function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform = 'windows', bridge = true, official = false } = {}) {
   let plugin;
   const commands = [];
   const slots = [];
@@ -36,7 +36,7 @@ function load({ mode = 'advanced', runtime = 'desktop', platform = 'windows', br
     setAttribute(name) { scrollAttributes.add(name); }, removeAttribute(name) { scrollAttributes.delete(name); },
     addEventListener() {}, focus() { actions.push('content-focus'); } };
   const documentListeners = new Map();
-  const document = { body: { dataset: { dshDesktopMode: mode } }, documentElement: {},
+  const document = { body: { dataset: mode == null ? {} : { dshDesktopMode: mode } }, documentElement: {},
     hasFocus() { return this.focused !== false; },
     querySelector() { return this.modalOpen ? {} : null; },
     addEventListener(type, listener) { documentListeners.set(type, listener); },
@@ -52,19 +52,23 @@ function load({ mode = 'advanced', runtime = 'desktop', platform = 'windows', br
     useRef(value) { return { current: value }; },
   };
   const context = {
-    window: { __ModuleLoader__: { load(definition) { plugin = definition.factory((name) => {
-      assert.equal(name, 'react');
-      return react;
-    }); } } },
+    window: { location: { search: urlMode === null ? '' : `?dsh-desktop-mode=${urlMode}`,
+      protocol: official ? 'dsh-app:' : 'http:', hostname: official ? 'app' : '127.0.0.1' },
+      __ModuleLoader__: { load(definition) { plugin = definition.factory((name) => {
+        assert.equal(name, 'react');
+        return react;
+      }); } } },
     document,
     MutationObserver: class {
       constructor(callback) { this.callback = callback; observers.push(this); }
       observe() {}
       disconnect() { this.disconnected = true; }
     },
-    dshDesktop: bridge ? { protocolVersion: 1 } : undefined,
-    dshDesktopActions: bridge ? { invoke(action) { actions.push(action); return Promise.resolve(); } } : undefined,
-    Date, Set,
+    dshDesktop: official ? { protocolVersion: 1, shortcuts: { get() {} }, keyboard: { subscribe() {} } }
+      : bridge ? { protocolVersion: 1 } : undefined,
+    dshDesktopActions: bridge && !official
+      ? { invoke(action) { actions.push(action); return Promise.resolve(); } } : undefined,
+    Date, Set, URLSearchParams,
     requestAnimationFrame(callback) { frames.push(callback); return frames.length; },
     cancelAnimationFrame() {},
     Promise, console,
@@ -127,35 +131,60 @@ function descendants(node) {
   return [node, ...node.children.flatMap(descendants)];
 }
 
-test('registers six unbound, app-owned actions and one dedicated settings page', async () => {
+test('registers fifteen unbound Desktop actions and one dedicated settings page', async () => {
   const { commands, slots, actions, disposed } = load();
-  assert.equal(commands.length, 6);
-  for (const command of commands) assert.deepEqual(Object.keys(command.defaults), []);
+  assert.equal(commands.length, 15);
+  for (const command of commands) {
+    assert.deepEqual(Object.keys(command.defaults), []);
+    // Official Desktop validates every dot-separated segment at its IPC boundary.
+    assert.match(command.id, /^[a-z][a-zA-Z0-9-]*(?:\.[a-zA-Z][a-zA-Z0-9-]*)+$/);
+  }
   assert.equal(slots[0].options.id, 'kana-desktop-shortcuts');
   assert.equal(slots[0].options.name, 'settings.section');
   assert.equal(slots[0].component().type, 'section');
   commands[0].resolve({ modal: null }).run();
   commands[1].resolve({ modal: null }).run();
-  assert.deepEqual(actions, ['developer', 'conversation']);
+  assert.deepEqual(actions, ['developer', null]);
   for (const off of disposed.reverse()) off();
   assert.equal(commands.length, 0);
   assert.equal(slots.length, 0);
 });
 
-test('registers after Desktop mode arrives and unregisters when mode leaves', () => {
+test('registers after Desktop mode arrives and keeps all three Desktop modes active', () => {
   const { document, observers, slots, commands, disposed } = load({ mode: null });
   assert.equal(slots.length, 0);
   assert.equal(commands.length, 0);
   document.body.dataset.dshDesktopMode = 'advanced';
   observers[0].callback();
   assert.equal(slots.length, 1);
-  assert.equal(commands.length, 6);
+  assert.equal(commands.length, 15);
   document.body.dataset.dshDesktopMode = 'compatibility';
+  observers[0].callback();
+  assert.equal(slots.length, 1);
+  assert.equal(commands.length, 15);
+  document.body.dataset.dshDesktopMode = 'extended';
+  observers[0].callback();
+  assert.equal(slots.length, 1);
+  assert.equal(commands.length, 15);
+  document.body.dataset.dshDesktopMode = 'unrecognized';
   observers[0].callback();
   assert.equal(slots.length, 0);
   assert.equal(commands.length, 0);
   for (const off of disposed.reverse()) off();
   assert.equal(observers[0].disconnected, true);
+});
+
+test('compatibility mode without a body marker uses trusted preload plus URL mode', () => {
+  const compatible = load({ mode: null, urlMode: 'compatibility', runtime: 'web' });
+  assert.equal(compatible.slots.length, 1);
+  assert.equal(compatible.commands.length, 15);
+  compatible.commands[1].resolve({ modal: null }).run();
+  assert.deepEqual(compatible.actions, [null]);
+  for (const off of compatible.disposed.reverse()) off();
+  const browserImpersonator = load({ mode: null, urlMode: 'compatibility', bridge: false, runtime: 'web' });
+  assert.equal(browserImpersonator.slots.length, 0);
+  assert.equal(browserImpersonator.commands.length, 0);
+  for (const off of browserImpersonator.disposed.reverse()) off();
 });
 
 test('dedicated page clears and resets only its own action through revision-aware storage', async () => {
@@ -175,18 +204,48 @@ test('dedicated page clears and resets only its own action through revision-awar
   ]);
 });
 
-test('accepts this Desktop’s web:windows shortcut service without exposing commands to browsers', () => {
-  const desktop = load({ runtime: 'web' });
-  assert.equal(desktop.commands.length, 6);
-  assert.equal(desktop.slots[0].component().type, 'section');
-  desktop.commands[1].resolve({ modal: null }).run();
-  assert.deepEqual(desktop.actions, ['conversation']);
-  const browser = load({ runtime: 'web', bridge: false, mode: null });
-  assert.equal(browser.commands.length, 0);
-  assert.equal(browser.slots.length, 0);
-  const otherPlatform = load({ runtime: 'web', platform: 'linux' });
-  assert.equal(otherPlatform.commands.length, 0);
-  assert.equal(otherPlatform.slots[0].component().type, 'div');
+test('official Desktop registers native-compatible actions, while plain Web stays inactive', () => {
+  const official = load({ mode: null, bridge: false, official: true, runtime: 'desktop' });
+  assert.equal(official.commands.length, 14);
+  assert.equal(official.commands.some((command) => command.id === 'kana.shortcuts.devtools'), false);
+  assert.equal(official.slots[0].component().type, 'section');
+  official.commands[0].resolve({ modal: null }).run();
+  assert.deepEqual(official.actions, [null]);
+  for (const platform of ['windows', 'macos', 'linux']) {
+    const browser = load({ mode: null, bridge: false, official: false, runtime: 'web', platform });
+    assert.equal(browser.commands.length, 0);
+    assert.equal(browser.slots.length, 0);
+    for (const off of browser.disposed.reverse()) off();
+  }
+  for (const off of official.disposed.reverse()) off();
+});
+
+test('mode arriving late does not discard existing action identities', () => {
+  const { commands, document, observers, disposed } = load({ mode: null });
+  assert.equal(commands.length, 0);
+  document.body.dataset.dshDesktopMode = 'compatibility';
+  observers[0].callback();
+  assert.equal(commands.length, 15);
+  assert.deepEqual(Array.from(commands.slice(0, 6), (command) => command.id), [
+    'kana.shortcuts.devtools', 'kana.shortcuts.conversation', 'kana.shortcuts.focus-composer',
+    'kana.shortcuts.focus-content', 'kana.shortcuts.recent-session', 'kana.shortcuts.previous-session',
+  ]);
+  for (const off of disposed.reverse()) off();
+});
+
+test('official Desktop uses configurable panel actions without community fixed Ctrl+digit', () => {
+  const { commands, fixedInputs, actions, disposed } = load({ mode: null, bridge: false, official: true });
+  const first = commands.find((command) => command.id === 'kana.shortcuts.panel.digit1');
+  assert.equal(first.resolve({ modal: null }).status, 'handled');
+  first.resolve({ modal: null }).run();
+  let consumed = false;
+  fixedInputs[0]({ type: 'keydown', gesture: {
+    code: 'Digit1', control: true, alt: false, shift: false, meta: false,
+    repeat: false, composing: false, defaultPrevented: false,
+  }, context: { region: 'page', modal: null }, consume() { consumed = true; } });
+  assert.deepEqual(actions, ['plugins']);
+  assert.equal(consumed, false);
+  for (const off of disposed.reverse()) off();
 });
 
 test('focus action returns to current conversation and calls the owned editor focus', () => {
@@ -254,6 +313,19 @@ test('editable capture handles user-bound Ctrl+Shift+Z before editor redo, but n
   assert.equal(prevented, 1);
   for (const off of disposed.reverse()) off();
   assert.equal(documentListeners.has('keydown'), false);
+});
+
+test('native Desktop never double-dispatches editable shortcuts through the Web capture path', () => {
+  const { catalog, documentListeners, actions, disposed } = load({ mode: null, bridge: false, official: true });
+  catalog.push({ id: 'kana.shortcuts.focus-content',
+    binding: { code: 'KeyZ', modifiers: ['control', 'shift'] } });
+  let prevented = false;
+  documentListeners.get('keydown')({ code: 'KeyZ', ctrlKey: true, shiftKey: true,
+    altKey: false, metaKey: false, target: { closest() { return {}; } },
+    preventDefault() { prevented = true; }, stopPropagation() {} });
+  assert.equal(prevented, false);
+  assert.deepEqual(actions, []);
+  for (const off of disposed.reverse()) off();
 });
 
 test('editable capture leaves unbound and conflicted shortcuts untouched', () => {
@@ -356,12 +428,13 @@ test('panel order follows live slots and fixed conflicts are not consumed', () =
   for (const off of disposed.reverse()) off();
 });
 
-test('never invokes outside enhanced Desktop, in a modal, or while unfocused', () => {
-  for (const config of [{ mode: 'compatibility' }, { mode: 'extended' }, { bridge: false }]) {
-    const { commands, actions, slots } = load(config);
-    assert.equal(commands.length, 0);
-    assert.equal(slots.length, 0);
-    assert.deepEqual(actions, []);
+test('never invokes in an unknown mode, in a modal, or while unfocused', () => {
+  for (const config of [{ mode: 'unknown' }, { mode: 'compatibility', bridge: false },
+    { mode: null, bridge: true }, { mode: null, bridge: false }]) {
+    const unsupported = load(config);
+    assert.equal(unsupported.commands.length, 0);
+    assert.equal(unsupported.slots.length, 0);
+    for (const off of unsupported.disposed.reverse()) off();
   }
   const { commands, actions, document } = load({ runtime: 'web' });
   assert.equal(commands[0].resolve({ modal: 'settings' }).status, 'blocked');
