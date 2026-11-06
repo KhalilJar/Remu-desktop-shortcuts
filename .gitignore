@@ -1,0 +1,38 @@
+# Local dependencies and generated artifacts
+/node_modules/
+/dist/
+/build/
+/coverage/
+/.cache/
+/.pnpm-store/
+*.tsbuildinfo
+
+# Logs and temporary files
+*.log
+*.tmp
+*.bak
+*.swp
+*~
+
+# Local configuration and credentials (never commit real secrets)
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.sqlite
+*.sqlite3
+*.db
+/.dsh/
+
+# Editor and OS state
+/.vscode/
+/.idea/
+.DS_Store
+Thumbs.db
+Desktop.ini
+
+# Empty local placeholder; not part of the distributed plugin
+/Agents.md

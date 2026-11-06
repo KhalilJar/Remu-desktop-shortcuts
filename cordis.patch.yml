@@ -1,0 +1,4 @@
+- insert:
+    - id: kana-desktop-shortcuts
+      name: ./host.js
+      disabled: false
