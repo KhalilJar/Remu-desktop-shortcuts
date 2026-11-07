@@ -5,7 +5,8 @@ import { runInNewContext } from 'node:vm';
 
 const source = await readFile(new URL('../client.js', import.meta.url), 'utf8');
 
-function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform = 'windows', bridge = true, official = false } = {}) {
+function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform = 'windows', bridge = true, official = false, next = false,
+  settingsRecordingId = null, settingsRecordReady = false } = {}) {
   let plugin;
   const commands = [];
   const slots = [];
@@ -44,10 +45,17 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
     querySelectorAll() { return [{ dataset: { conversationSession: selected.key }, querySelector() { return scroll; } }]; } };
   const config = { status: 'ready', revision: 'one' };
   const catalog = [];
+  const stateUpdates = [];
+  let stateIndex = 0;
   const react = {
     createElement(type, props, ...children) { return { type, props: props ?? {}, children }; },
     useSyncExternalStore(_subscribe, snapshot) { return snapshot(); },
-    useState(value) { return [value, () => {}]; },
+    useState(value) {
+      const index = stateIndex++;
+      const current = index === 1 && settingsRecordingId !== null ? settingsRecordingId
+        : index === 2 && settingsRecordingId !== null ? settingsRecordReady : value;
+      return [current, (next) => stateUpdates.push({ index, next })];
+    },
     useEffect() {},
     useRef(value) { return { current: value }; },
   };
@@ -68,6 +76,7 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
       : bridge ? { protocolVersion: 1 } : undefined,
     dshDesktopActions: bridge && !official
       ? { invoke(action) { actions.push(action); return Promise.resolve(); } } : undefined,
+    desktopNext: next ? { command(command) { actions.push(command); return Promise.resolve(); } } : undefined,
     Date, Set, URLSearchParams,
     requestAnimationFrame(callback) { frames.push(callback); return frames.length; },
     cancelAnimationFrame() {},
@@ -119,7 +128,7 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
         name === 'main' ? [...mainPanels].map((key) => ({ options: { key } })) : []; } },
   };
   plugin.apply(ctx);
-  return { commands, slots, actions, disposed, edits, catalog, document, observers,
+  return { commands, slots, actions, disposed, edits, catalog, document, observers, stateUpdates,
     fixedInputs, frames, sidebarPanels, mainPanels, slotListeners, fixedRows, panelInfo,
     selected, selectedListeners, sessionList, sessionRows, listListeners, workspaceList, workspaceListeners,
     scrollAttributes, documentListeners };
@@ -218,6 +227,47 @@ test('official Desktop registers native-compatible actions, while plain Web stay
     for (const off of browser.disposed.reverse()) off();
   }
   for (const off of official.disposed.reverse()) off();
+});
+
+test('DSH NEXT reuses the original DevTools ID through its guarded native command', async () => {
+  const next = load({ mode: null, bridge: false, official: true, next: true });
+  assert.equal(next.commands.length, 15);
+  assert.equal(next.commands[0].id, 'kana.shortcuts.devtools');
+  assert.deepEqual(Object.keys(next.commands[0].defaults), []);
+  assert.equal(next.commands[0].resolve({ modal: 'settings' }).status, 'blocked');
+  assert.equal(next.commands[0].resolve({ modal: null }).status, 'handled');
+  await next.commands[0].resolve({ modal: null }).run();
+  assert.deepEqual(next.actions.map((action) => action.type), ['devtools']);
+  assert.deepEqual(next.edits, []);
+  for (const off of next.disposed.reverse()) off();
+
+  const browser = load({ mode: null, bridge: false, next: true, runtime: 'web' });
+  assert.equal(browser.commands.length, 0);
+  assert.equal(browser.slots.length, 0);
+  for (const off of browser.disposed.reverse()) off();
+});
+
+test('recorder keeps its button through the asynchronous native start and cancels explicitly', () => {
+  const environment = { mode: null, bridge: false, official: true, next: true };
+  const idle = load(environment);
+  const record = descendants(idle.slots[0].component()).find((node) =>
+    node.type === 'button' && node.props['aria-label'] === 'record');
+  assert.ok(record?.props.ref);
+  assert.equal(record.props.onBlur, undefined);
+  record.props.onClick();
+  assert.deepEqual(idle.stateUpdates.at(-1), { index: 1, next: 'kana.shortcuts.devtools' });
+  for (const off of idle.disposed.reverse()) off();
+
+  const starting = load({ ...environment, settingsRecordingId: 'kana.shortcuts.devtools' });
+  const recorder = descendants(starting.slots[0].component()).find((node) =>
+    node.type === 'button' && node.props['aria-label'] === 'recordingWindows');
+  assert.ok(recorder?.props.ref);
+  assert.equal(recorder.props.onBlur, undefined);
+  assert.equal(recorder.props.disabled, false);
+  assert.equal(recorder.children[0], 'preparing');
+  recorder.props.onClick();
+  assert.deepEqual(starting.stateUpdates.at(-1), { index: 1, next: null });
+  for (const off of starting.disposed.reverse()) off();
 });
 
 test('mode arriving late does not discard existing action identities', () => {

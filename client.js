@@ -24,14 +24,14 @@ window.__ModuleLoader__.load({
           content: '聚焦会话内容（方向键滚动）', recent: '速切最近会话（连按轮换）',
           previous: '返回上一个会话（往返切换）', choose: '选择动作',
           panelKeys: '功能页速切', panelAction: '切换到功能页 {digit}',
-          panelHelpDesktop: '社区 Windows Desktop 可用 Ctrl+1～8 按左侧功能页顺序切换、Ctrl+9 打开最后一页；也可以单独录制键位。冲突时不接管。',
-          panelHelpOfficial: '官方 Desktop 请为“切换到功能页”动作分别录制键位；固定 Ctrl+数字只在社区 Windows Desktop 启用。',
-          noDevtools: '此动作仅支持提供开发者工具桥的社区 Desktop；官方 Desktop 请用应用菜单中的开发者工具。',
+          panelHelpDesktop: '社区 Stable Windows Desktop 可用 Ctrl+1～8 按左侧功能页顺序切换、Ctrl+9 打开最后一页；也可以单独录制键位。冲突时不接管。',
+          panelHelpOfficial: '官方 Desktop 与 DSH NEXT 请为“切换到功能页”动作分别录制键位；固定 Ctrl+数字只在有旧桥的社区 Stable Windows Desktop 启用。',
+          noDevtools: '此动作只在有受控开发者工具桥的 Desktop 中显示；其他 Desktop 请用应用菜单。',
           panelTaken: '已被其他快捷键占用', panelNone: '暂无可切换的功能页',
           sessionHelp: '会话速切可连按轮换：短时间内连续按键会经过更多会话；“上一个会话”在最近访问的两个会话间往返。需先至少访问两个会话。系统 Alt+Tab 不会被接管。',
-          record: '＋ 录制快捷键', recordingWindows: '请按 Ctrl + Alt/Shift + 字母或数字；Esc 取消',
-          recordingMac: '请按 Command + Option/Shift + 字母或数字；Esc 取消',
-          recordingLinux: '可尝试 Ctrl+/、Ctrl+Shift+, 或 Ctrl+Shift+.；Esc 取消',
+          record: '＋ 录制快捷键', recordingWindows: '请按 Ctrl + Alt/Shift + 字母或数字；再点按钮或 Esc 取消',
+          recordingMac: '请按 Command + Option/Shift + 字母或数字；再点按钮或 Esc 取消',
+          recordingLinux: '可尝试 Ctrl+/、Ctrl+Shift+, 或 Ctrl+Shift+.；再点按钮或 Esc 取消',
           preparing: '正在准备录制…', empty: '尚未设置', clear: '移除', reset: '恢复默认',
           saved: '已保存快捷键', cleared: '快捷键已移除', cancelled: '已取消录制',
           invalid: '此环境不支持该组合；请按录制提示选择，不会改动 Enter。',
@@ -48,14 +48,14 @@ window.__ModuleLoader__.load({
           content: 'Focus conversation content (arrow-key scrolling)', recent: 'Cycle recent conversations',
           previous: 'Return to previous conversation (toggle)', choose: 'Choose an action',
           panelKeys: 'Quick panel switch', panelAction: 'Open function panel {digit}',
-          panelHelpDesktop: 'On community Windows Desktop, Ctrl+1–8 follow the left panel order and Ctrl+9 opens the last panel. You can also record separate shortcuts. Existing bindings take priority.',
-          panelHelpOfficial: 'On official Desktop, record a separate shortcut for each function panel. Fixed Ctrl+digits works only in community Windows Desktop.',
-          noDevtools: 'This action needs the community Desktop developer bridge; use the application menu for official Desktop DevTools.',
+          panelHelpDesktop: 'On community Stable Windows Desktop, Ctrl+1–8 follow the left panel order and Ctrl+9 opens the last panel. You can also record separate shortcuts. Existing bindings take priority.',
+          panelHelpOfficial: 'On official Desktop or DSH NEXT, record a separate shortcut for each function panel. Fixed Ctrl+digits needs the older community Stable Windows bridge.',
+          noDevtools: 'This action requires a supported Desktop developer bridge; use the application menu elsewhere.',
           panelTaken: 'Used by another shortcut', panelNone: 'No panels available',
           sessionHelp: 'Press the recent-conversation shortcut repeatedly to cycle within a short interval. Previous conversation toggles between the two most recently visited. Visit two conversations first. System Alt+Tab is unchanged.',
-          record: '＋ Record shortcut', recordingWindows: 'Press Ctrl + Alt/Shift + letter or digit; Esc cancels',
-          recordingMac: 'Press Command + Option/Shift + letter or digit; Esc cancels',
-          recordingLinux: 'Try Ctrl+/, Ctrl+Shift+, or Ctrl+Shift+.; Esc cancels',
+          record: '＋ Record shortcut', recordingWindows: 'Press Ctrl + Alt/Shift + letter or digit; click again or Esc to cancel',
+          recordingMac: 'Press Command + Option/Shift + letter or digit; click again or Esc to cancel',
+          recordingLinux: 'Try Ctrl+/, Ctrl+Shift+, or Ctrl+Shift+.; click again or Esc to cancel',
           preparing: 'Preparing recorder…', empty: 'Not assigned', clear: 'Remove', reset: 'Restore default',
           saved: 'Shortcut saved', cleared: 'Shortcut removed', cancelled: 'Recording cancelled',
           invalid: 'This combination is not supported here. Use the recorder hint; Enter is unaffected.',
@@ -86,13 +86,15 @@ window.__ModuleLoader__.load({
         return bridgeReady() && urlMode() === 'compatibility' ? 'compatibility' : undefined;
       };
       const desktopReady = () => bridgeReady() && desktopModes.includes(desktopMode());
+      const nextDeveloperReady = () => officialReady() && typeof globalThis.desktopNext?.command === 'function';
+      const devtoolsReady = () => desktopReady() || nextDeveloperReady();
       const pageReady = () => officialReady() || desktopReady();
       const fixedPanelAvailable = () => desktopReady() && ctx.shortcuts.platform === 'windows';
 
       // DSH owns keyboard dispatch, conflict checks and storage. Keep original
       // action IDs so each runtime's saved preferences remain untouched.
-      // Official Desktop uses its native adapter; community Desktop currently
-      // identifies as web:windows and keeps a distinct renderer storage partition.
+      // Official Desktop and DSH NEXT use native adapters; community Stable 2.0.18
+      // identified as web:windows with its own renderer storage partition.
       const currentSessionId = () => ctx.uiSession.adapter.current.getSnapshot().key;
       const currentSession = () => ctx.sessions.list.getSnapshot().byId[currentSessionId()];
       // Match the sidebar's ordinary visible Sessions; never open an archive,
@@ -212,8 +214,18 @@ window.__ModuleLoader__.load({
       };
       const commands = [
         { id: ids[0], key: 'devtools', nativeOnly: true,
-          run: () => Promise.resolve(globalThis.dshDesktopActions.invoke('developer'))
-            .catch((error) => console.error('kana-desktop-shortcuts: developer action failed', error)) },
+          run: () => {
+            let action;
+            try {
+              if (desktopReady()) action = globalThis.dshDesktopActions.invoke('developer');
+              else if (nextDeveloperReady()) action = globalThis.desktopNext.command({ type: 'devtools' });
+            } catch (error) {
+              console.error('kana-desktop-shortcuts: developer action failed', error);
+              return;
+            }
+            return Promise.resolve(action).catch((error) =>
+              console.error('kana-desktop-shortcuts: developer action failed', error));
+          } },
         { id: ids[1], key: 'conversation', run: () => ctx.layout.selectPanel(null) },
         { id: ids[2], key: 'focus', run: focusCurrentComposer,
           available: () => Boolean(currentSession()) && Boolean(ctx.get('conversation')) },
@@ -231,7 +243,7 @@ window.__ModuleLoader__.load({
             available: () => Boolean(panelForDigit(digit)) };
         }),
       ];
-      const enabledCommands = () => commands.filter((command) => !command.nativeOnly || desktopReady());
+      const enabledCommands = () => commands.filter((command) => !command.nativeOnly || devtoolsReady());
       const commandLabel = (command) => command.label?.() ?? t(command.key);
       // Lexical handles Ctrl+Shift+Z (redo) before the shortcuts service's
       // window-bubble listener. Route only our explicitly assigned new actions
@@ -274,7 +286,7 @@ window.__ModuleLoader__.load({
           for (const command of enabledCommands()) disposers.push(ctx.shortcuts.register({
             id: command.id, label: () => commandLabel(command), aliases: [command.id, commandLabel(command)],
             defaults: {}, regions: command.regions ?? ['page'], modals: [],
-            resolve: ({ modal }) => !pageReady() || (command.nativeOnly && !desktopReady()) ||
+            resolve: ({ modal }) => !pageReady() || (command.nativeOnly && !devtoolsReady()) ||
               !document.hasFocus() || modal !== null || (command.available && !command.available())
               ? { status: 'blocked', reason: 'focus-modal-or-session' }
               : { status: 'handled', run: command.run },
@@ -381,15 +393,16 @@ window.__ModuleLoader__.load({
           let pending = null;
           setRecordReady(false);
           const down = (event) => {
+            if (event.key === 'Escape' && !event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey) {
+              event.preventDefault();
+              event.stopPropagation();
+              if (!event.repeat) { setMessage(t('cancelled')); setRecordingId(null); }
+              return;
+            }
             if (document.activeElement !== recorder.current || event.isComposing || event.getModifierState?.('AltGraph')) return;
             event.preventDefault();
             event.stopPropagation();
             if (event.repeat) return;
-            if (event.key === 'Escape' && !event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey) {
-              setMessage(t('cancelled'));
-              setRecordingId(null);
-              return;
-            }
             if (/^(Control|Alt|Shift|Meta)(Left|Right)$/.test(event.code)) return;
             const platform = ctx.shortcuts.platform;
             const codeAllowed = platform === 'linux'
@@ -470,7 +483,7 @@ window.__ModuleLoader__.load({
         },
         React.createElement('h2', { style: { margin: '0 0 8px', fontSize: 20 } }, t('title')),
         React.createElement('p', { style: { color: colors.secondary, margin: '0 0 20px' } }, t('introduction')),
-        !desktopReady() && React.createElement('p', { style: { color: colors.secondary, fontSize: 13 } }, t('noDevtools')),
+        !devtoolsReady() && React.createElement('p', { style: { color: colors.secondary, fontSize: 13 } }, t('noDevtools')),
         React.createElement('div', { style: { display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 12, marginBottom: 20 } },
           React.createElement('label', { htmlFor: 'kana-shortcut-action' }, t('choose')),
           React.createElement('select', { id: 'kana-shortcut-action', value: selectedCommand,
@@ -478,18 +491,21 @@ window.__ModuleLoader__.load({
             style: { font: 'inherit', color: colors.text, background: colors.surface,
               border: `1px solid ${colors.border}`, borderRadius: 8, padding: '7px 12px' },
           }, visible.map((command) => React.createElement('option', { key: command.id, value: command.id }, commandLabel(command)))),
-          recordingId === null ? button(t('record'), () => {
-            if (!available) return;
-            setMessage('');
-            setRecordReady(false);
-            setRecordingId(selectedCommand);
-          }, !available) : React.createElement('button', {
-            ref: recorder, type: 'button', 'aria-label': recordingHint(),
-            onBlur: () => setRecordingId(null),
-            disabled: !recordReady,
-            style: { font: 'inherit', color: colors.accent, background: colors.surface,
-              border: `1px solid ${colors.accent}`, borderRadius: 8, padding: '7px 12px' },
-          }, recordReady ? recordingHint() : t('preparing'))),
+          React.createElement('button', {
+            ref: recorder, type: 'button',
+            'aria-label': recordingId === null ? t('record') : recordingHint(),
+            onClick: () => {
+              if (recordingId !== null) { setRecordingId(null); return; }
+              if (!available) return;
+              setMessage('');
+              setRecordReady(false);
+              setRecordingId(selectedCommand);
+            },
+            disabled: recordingId === null && !available,
+            style: { font: 'inherit', color: recordingId === null ? colors.text : colors.accent,
+              background: colors.surface, border: `1px solid ${recordingId === null ? colors.border : colors.accent}`,
+              borderRadius: 8, padding: '7px 12px', cursor: 'pointer' },
+          }, recordingId === null ? t('record') : recordReady ? recordingHint() : t('preparing'))),
         config.status !== 'ready' && React.createElement('p', { role: 'alert' },
           t(config.status === 'unreadable' ? 'unreadable' : 'notReady')),
         React.createElement('div', null, rows.map(({ id, key, label, row }) => React.createElement('div', {
@@ -519,7 +535,7 @@ window.__ModuleLoader__.load({
         let registeredKind;
         const sync = () => {
           const active = pageReady();
-          const kind = active ? (desktopReady() ? 'community' : 'official') : undefined;
+          const kind = active ? (desktopReady() ? 'community-stable' : nextDeveloperReady() ? 'next' : 'official') : undefined;
           if (active && !disposeSlot) {
             disposeSlot = ctx.slots.inject('settings.section', () => ctx.slots.register({
               name: 'settings.section', id: 'kana-desktop-shortcuts', order: 22,
