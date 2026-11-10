@@ -37,7 +37,9 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
     setAttribute(name) { scrollAttributes.add(name); }, removeAttribute(name) { scrollAttributes.delete(name); },
     addEventListener() {}, focus() { actions.push('content-focus'); } };
   const documentListeners = new Map();
+  const windowListeners = new Map();
   const document = { body: { dataset: mode == null ? {} : { dshDesktopMode: mode } }, documentElement: {},
+    activeElement: null,
     hasFocus() { return this.focused !== false; },
     querySelector() { return this.modalOpen ? {} : null; },
     addEventListener(type, listener) { documentListeners.set(type, listener); },
@@ -46,22 +48,58 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
   const config = { status: 'ready', revision: 'one' };
   const catalog = [];
   const stateUpdates = [];
+  // Hooks are keyed by call order within one render, so every registered
+  // component gets its own store and its own re-render queue. That keeps a
+  // state update from one component out of another component's slot order.
+  let hookStore = { values: new Map(), effects: new Map(), refs: new Map() };
+  // Each hook kind keeps its own call counter, so a state index stays the
+  // n-th useState of a render no matter how many effects or refs sit between.
   let stateIndex = 0;
+  let effectIndex = 0;
+  let refIndex = 0;
   const react = {
     createElement(type, props, ...children) { return { type, props: props ?? {}, children }; },
     useSyncExternalStore(_subscribe, snapshot) { return snapshot(); },
     useState(value) {
+      const store = hookStore;
       const index = stateIndex++;
-      const current = index === 1 && settingsRecordingId !== null ? settingsRecordingId
-        : index === 2 && settingsRecordingId !== null ? settingsRecordReady : value;
-      return [current, (next) => stateUpdates.push({ index, next })];
+      const overridden = settingsRecordingId !== null && (index === 1 || index === 2);
+      const current = overridden ? (index === 1 ? settingsRecordingId : settingsRecordReady)
+        : store.values.has(index) ? store.values.get(index) : value;
+      store.values.set(index, current);
+      return [current, (next) => {
+        const resolved = typeof next === 'function' ? next(store.values.get(index)) : next;
+        store.values.set(index, resolved);
+        stateUpdates.push({ index, next });
+        store.schedule?.();
+      }];
     },
-    useEffect() {},
-    useRef(value) { return { current: value }; },
+    useEffect(effect, deps) {
+      const store = hookStore;
+      const index = effectIndex++;
+      const previous = store.effects.get(index);
+      const changed = !previous || !deps || !previous.deps || deps.length !== previous.deps.length
+        || deps.some((dependency, at) => dependency !== previous.deps[at]);
+      if (!changed) return;
+      if (typeof previous?.cleanup === 'function') previous.cleanup();
+      store.effects.set(index, { deps, cleanup: effect() });
+    },
+    useRef(value) {
+      const store = hookStore;
+      const index = refIndex++;
+      if (!store.refs.has(index)) store.refs.set(index, { current: value });
+      return store.refs.get(index);
+    },
   };
   const context = {
     window: { location: { search: urlMode === null ? '' : `?dsh-desktop-mode=${urlMode}`,
       protocol: official ? 'dsh-app:' : 'http:', hostname: official ? 'app' : '127.0.0.1' },
+      addEventListener(type, listener) {
+        let callbacks = windowListeners.get(type);
+        if (!callbacks) { callbacks = new Set(); windowListeners.set(type, callbacks); }
+        callbacks.add(listener);
+      },
+      removeEventListener(type, listener) { windowListeners.get(type)?.delete(listener); },
       __ModuleLoader__: { load(definition) { plugin = definition.factory((name) => {
         assert.equal(name, 'react');
         return react;
@@ -90,6 +128,7 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
       runtime, platform,
       register(command) { commands.push(command); return () => commands.splice(commands.indexOf(command), 1); },
       edit(operation, revision) { edits.push({ operation, revision }); return Promise.resolve({ status: 'saved' }); },
+      recording() { return Promise.resolve(); },
       describeBinding(binding) { return { binding, issue: null, conflicts: catalog.filter((row) =>
         row.binding?.code === binding.code && row.binding.modifiers.join(',') === binding.modifiers.join(','))
         .map((row) => row.id) }; },
@@ -116,8 +155,28 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
     workspaces: { list: { getSnapshot() { return workspaceList; },
       subscribe(listener) { workspaceListeners.add(listener); return () => workspaceListeners.delete(listener); } } },
     get(name) { return name === 'conversation' ? { input: { for() { return focusedShell; } } } : undefined; },
-    slots: { inject(name, register) { assert.equal(name, 'settings.section'); return register(); },
-      register(options, component) { slots.push({ options, component }); return () => slots.pop(); },
+    slots: { inject(name, register) {
+        assert.ok(name === 'settings.section' || name === 'shell.overlay', name);
+        return register();
+      },
+      register(options, component) {
+        const store = { values: new Map(), effects: new Map(), refs: new Map(), props: undefined, queued: false };
+        const render = (props) => {
+          store.props = props;
+          hookStore = store;
+          stateIndex = 0;
+          effectIndex = 0;
+          refIndex = 0;
+          return component(props);
+        };
+        store.schedule = () => {
+          if (store.queued) return;
+          store.queued = true;
+          Promise.resolve().then(() => { store.queued = false; render(store.props); });
+        };
+        slots.push({ options, component: render });
+        return () => slots.pop();
+      },
       subscribe(name, listener) {
         let callbacks = slotListeners.get(name);
         if (!callbacks) { callbacks = new Set(); slotListeners.set(name, callbacks); }
@@ -131,7 +190,7 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
   return { commands, slots, actions, disposed, edits, catalog, document, observers, stateUpdates,
     fixedInputs, frames, sidebarPanels, mainPanels, slotListeners, fixedRows, panelInfo,
     selected, selectedListeners, sessionList, sessionRows, listListeners, workspaceList, workspaceListeners,
-    scrollAttributes, documentListeners };
+    scrollAttributes, documentListeners, windowListeners };
 }
 
 function descendants(node) {
@@ -231,7 +290,7 @@ test('official Desktop registers native-compatible actions, while plain Web stay
 
 test('DSH NEXT reuses the original DevTools ID through its guarded native command', async () => {
   const next = load({ mode: null, bridge: false, official: true, next: true });
-  assert.equal(next.commands.length, 15);
+  assert.equal(next.commands.length, 18);
   assert.equal(next.commands[0].id, 'kana.shortcuts.devtools');
   assert.deepEqual(Object.keys(next.commands[0].defaults), []);
   assert.equal(next.commands[0].resolve({ modal: 'settings' }).status, 'blocked');
@@ -491,4 +550,206 @@ test('never invokes in an unknown mode, in a modal, or while unfocused', () => {
   document.focused = false;
   assert.equal(commands[0].resolve({ modal: null }).status, 'blocked');
   assert.deepEqual(actions, []);
+});
+
+const nextWindows = { mode: null, bridge: false, official: true, next: true };
+
+function visitBoard(environment, ids) {
+  for (const id of ids) {
+    environment.selected.key = id;
+    for (const listener of environment.selectedListeners) listener();
+  }
+}
+
+const boardCommand = (environment, suffix = '') =>
+  environment.commands.find((command) => command.id === `kana.shortcuts.session-board${suffix}`);
+
+const overlaySlot = (environment) => environment.slots.find((slot) => slot.options.name === 'shell.overlay');
+
+const boardNode = (environment) => descendants(overlaySlot(environment).component())
+  .find((node) => typeof node.props?.['data-kana-session-board'] === 'string');
+
+const fireWindow = (environment, type, event) => {
+  for (const listener of environment.windowListeners.get(type) ?? []) listener(event);
+};
+
+const keyEvent = (event) => ({ altKey: false, ctrlKey: false, shiftKey: false, metaKey: false,
+  repeat: false, preventDefault() {}, stopPropagation() {}, ...event });
+
+// Drains every pending microtask, including the ones a chain of awaited edits
+// schedules, without relying on timers inside the sandboxed renderer.
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+
+const cardsOf = (node) => descendants(node).filter((child) => child.props?.role === 'option');
+
+test('session board exists only on NEXT Windows and commits exactly once on the Alt release', () => {
+  const plain = load();
+  assert.equal(plain.commands.some((command) => command.id === 'kana.shortcuts.session-board'), false);
+  assert.equal(overlaySlot(plain), undefined);
+  for (const off of plain.disposed.reverse()) off();
+
+  const environment = load(nextWindows);
+  visitBoard(environment, ['s2', 's1']);
+  environment.actions.length = 0;
+  const open = boardCommand(environment);
+  assert.equal(open.resolve({ modal: null }).status, 'handled');
+  open.resolve({ modal: null }).run();
+  const node = boardNode(environment);
+  assert.equal(node.props['data-kana-session-board'], 'transient');
+  assert.equal(cardsOf(node).length, 2);
+  assert.deepEqual(environment.actions, []);
+  fireWindow(environment, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
+  assert.deepEqual(environment.actions, ['open:s2']);
+  // The release is consumed once; a stale second keyup must not navigate again.
+  fireWindow(environment, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
+  assert.deepEqual(environment.actions, ['open:s2']);
+  assert.equal(boardNode(environment), undefined);
+  for (const off of environment.disposed.reverse()) off();
+});
+
+test('session board moves backwards around the ring and cancels without navigating', () => {
+  const environment = load(nextWindows);
+  visitBoard(environment, ['s2', 's3', 's1']);
+  environment.actions.length = 0;
+  boardCommand(environment).resolve({ modal: null }).run();
+  assert.equal(boardCommand(environment, '-back').resolve({ modal: null }).status, 'handled');
+  boardCommand(environment, '-back').resolve({ modal: null }).run();
+  fireWindow(environment, 'keyup', keyEvent({ code: 'AltRight', key: 'Alt' }));
+  // Three candidates start at "the previous session" (s3); one step back wraps to s2.
+  assert.deepEqual(environment.actions, ['open:s2']);
+
+  environment.actions.length = 0;
+  boardCommand(environment).resolve({ modal: null }).run();
+  assert.equal(boardNode(environment).props['data-kana-session-board'], 'transient');
+  fireWindow(environment, 'keydown', keyEvent({ code: 'Escape' }));
+  assert.equal(boardNode(environment), undefined);
+  assert.deepEqual(environment.actions, []);
+  for (const off of environment.disposed.reverse()) off();
+});
+
+test('pinned board outlives the Alt release and opens only on Enter', () => {
+  const environment = load(nextWindows);
+  visitBoard(environment, ['s2', 's3', 's1']);
+  environment.actions.length = 0;
+  boardCommand(environment, '-pin').resolve({ modal: null }).run();
+  assert.equal(boardNode(environment).props['data-kana-session-board'], 'pinned');
+  fireWindow(environment, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
+  assert.deepEqual(environment.actions, []);
+  assert.equal(boardNode(environment).props['data-kana-session-board'], 'pinned');
+  fireWindow(environment, 'keydown', keyEvent({ code: 'ArrowRight' }));
+  fireWindow(environment, 'keydown', keyEvent({ code: 'Enter' }));
+  assert.deepEqual(environment.actions, ['open:s2']);
+
+  // Pressing the combination again cancels the pinned board without opening.
+  environment.actions.length = 0;
+  boardCommand(environment, '-pin').resolve({ modal: null }).run();
+  boardCommand(environment, '-pin').resolve({ modal: null }).run();
+  assert.equal(boardNode(environment), undefined);
+  assert.deepEqual(environment.actions, []);
+  for (const off of environment.disposed.reverse()) off();
+});
+
+test('Delete drops a candidate without archiving it, and revisiting restores it', () => {
+  const environment = load(nextWindows);
+  visitBoard(environment, ['s2', 's1']);
+  environment.actions.length = 0;
+  boardCommand(environment).resolve({ modal: null }).run();
+  fireWindow(environment, 'keydown', keyEvent({ code: 'Delete', altKey: true }));
+  // Only the current conversation is left, so the board closes with a hint and
+  // the real conversation list is untouched.
+  assert.equal(boardNode(environment).props['data-kana-session-board'], 'hint');
+  assert.deepEqual(environment.sessionList.ids, ['s1', 's2', 's3']);
+  assert.deepEqual(environment.actions, []);
+
+  visitBoard(environment, ['s2']);
+  boardCommand(environment).resolve({ modal: null }).run();
+  assert.equal(cardsOf(boardNode(environment)).length, 2);
+  for (const off of environment.disposed.reverse()) off();
+});
+
+test('board does not guess a conversation when fewer than two were visited', () => {
+  const environment = load(nextWindows);
+  environment.actions.length = 0;
+  assert.equal(boardCommand(environment).resolve({ modal: null }).status, 'handled');
+  boardCommand(environment).resolve({ modal: null }).run();
+  const node = boardNode(environment);
+  assert.equal(node.props['data-kana-session-board'], 'hint');
+  assert.deepEqual(node.children, ['boardNone']);
+  assert.deepEqual(environment.actions, []);
+  for (const off of environment.disposed.reverse()) off();
+});
+
+test('board refuses to open from an embedded frame, where the release is unobservable', () => {
+  const environment = load(nextWindows);
+  visitBoard(environment, ['s2', 's1']);
+  environment.actions.length = 0;
+  assert.equal(boardCommand(environment).resolve({ modal: null, source: 'iframe' }).status, 'handled');
+  assert.equal(boardNode(environment).props['data-kana-session-board'], 'hint');
+  fireWindow(environment, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
+  assert.deepEqual(environment.actions, []);
+  for (const off of environment.disposed.reverse()) off();
+});
+
+test('board recorder takes an Alt-only combination and saves all three derivatives', async () => {
+  const environment = load(nextWindows);
+  const record = descendants(environment.slots[0].component())
+    .find((node) => node.type === 'button' && node.props['aria-label'] === 'boardRecord');
+  assert.ok(record);
+  record.props.onClick();
+  assert.deepEqual(environment.stateUpdates.at(-1), { index: 5, next: true });
+  await flush();
+  const down = environment.documentListeners.get('keydown');
+  const up = environment.documentListeners.get('keyup');
+  assert.ok(down && up);
+
+  // The ordinary recorder's Ctrl+Alt constraint still applies here: reject it.
+  down(keyEvent({ code: 'KeyK', altKey: true, ctrlKey: true }));
+  assert.equal(environment.stateUpdates.at(-1).index, 8);
+  up(keyEvent({ code: 'KeyK', altKey: true, ctrlKey: true }));
+  assert.deepEqual(environment.edits, []);
+
+  down(keyEvent({ code: 'KeyK', altKey: true }));
+  up(keyEvent({ code: 'KeyK', altKey: true }));
+  await flush();
+  // The renderer runs in its own VM realm, so compare the serialized operations
+  // instead of relying on cross-realm prototype identity.
+  assert.deepEqual(environment.edits.map((entry) => JSON.stringify(entry.operation)), [
+    JSON.stringify({ type: 'set', id: 'kana.shortcuts.session-board', binding: { code: 'KeyK', modifiers: ['alt'] } }),
+    JSON.stringify({ type: 'set', id: 'kana.shortcuts.session-board-back', binding: { code: 'KeyK', modifiers: ['alt', 'shift'] } }),
+    JSON.stringify({ type: 'set', id: 'kana.shortcuts.session-board-pin', binding: { code: 'KeyK', modifiers: ['control', 'alt'] } }),
+  ]);
+  for (const off of environment.disposed.reverse()) off();
+});
+
+test('board binding save writes nothing when a derived combination is taken', async () => {
+  const environment = load(nextWindows);
+  environment.catalog.push({ id: 'other.action', label: 'other',
+    binding: { code: 'KeyK', modifiers: ['control', 'alt'] }, keys: ['Ctrl', '+', 'Alt', '+', 'K'], modified: true });
+  const record = descendants(environment.slots[0].component())
+    .find((node) => node.type === 'button' && node.props['aria-label'] === 'boardRecord');
+  record.props.onClick();
+  await flush();
+  environment.documentListeners.get('keydown')(keyEvent({ code: 'KeyK', altKey: true }));
+  environment.documentListeners.get('keyup')(keyEvent({ code: 'KeyK', altKey: true }));
+  await flush();
+  assert.deepEqual(environment.edits, []);
+  // The conflict is reported through the dedicated board status line.
+  assert.equal(environment.stateUpdates.some((update) => update.index === 8), true);
+  for (const off of environment.disposed.reverse()) off();
+});
+
+test('board settings stay out of the ordinary action list', () => {
+  const desktop = load();
+  assert.equal(descendants(desktop.slots[0].component())
+    .some((node) => node.props?.['data-kana-board-settings'] !== undefined), false);
+  for (const off of desktop.disposed.reverse()) off();
+
+  const environment = load(nextWindows);
+  const settings = environment.slots[0].component();
+  assert.equal(descendants(settings).some((node) => node.props?.['data-kana-board-settings'] !== undefined), true);
+  const select = descendants(settings).find((node) => node.type === 'select');
+  // createElement receives the mapped options as a single child array.
+  assert.equal(select.children[0].length, 15);
+  assert.equal(select.children[0].some((option) => option.children[0] === 'board'), false);
+  for (const off of environment.disposed.reverse()) off();
 });

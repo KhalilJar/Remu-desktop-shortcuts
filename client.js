@@ -12,6 +12,15 @@ window.__ModuleLoader__.load({
         'kana.shortcuts.devtools', 'kana.shortcuts.conversation', 'kana.shortcuts.focus-composer',
         'kana.shortcuts.focus-content', 'kana.shortcuts.recent-session', 'kana.shortcuts.previous-session',
       ];
+      // One user-recorded base combination and its two derived companions.
+      const boardIds = [
+        'kana.shortcuts.session-board', 'kana.shortcuts.session-board-back',
+        'kana.shortcuts.session-board-pin',
+      ];
+      // Sessions the user removed from this launch's board candidates. The
+      // current session is never removed here, and revisiting a removed session
+      // puts it back (syncRecent clears the entry once it becomes current).
+      const boardRemovedIds = new Set();
       const colors = {
         text: 'var(--dsw-alias-label-primary)', secondary: 'var(--dsw-alias-label-secondary)',
         surface: 'var(--dsw-alias-bg-layer-2)', border: 'var(--dsw-alias-border-l1)',
@@ -29,6 +38,20 @@ window.__ModuleLoader__.load({
           noDevtools: '此动作只在有受控开发者工具桥的 Desktop 中显示；其他 Desktop 请用应用菜单。',
           panelTaken: '已被其他快捷键占用', panelNone: '暂无可切换的功能页',
           sessionHelp: '会话速切可连按轮换：短时间内连续按键会经过更多会话；“上一个会话”在最近访问的两个会话间往返。需先至少访问两个会话。系统 Alt+Tab 不会被接管。',
+          board: '会话轮切板', boardBack: '会话轮切板（反向）', boardPin: '会话轮切板（固定模式）',
+          boardSection: '会话轮切板（DSH NEXT / Windows）',
+          boardHelp: '录一次 Alt + 普通键（例如 Alt+Q）。插件据此派生 Shift+Alt+Q 反向移动与 Ctrl+Alt+Q 固定模式；三者任一被占用就不保存，原键位保持不变。按住 Alt 连按基础键移动高亮，松开 Alt 才切换；Esc 取消。',
+          boardRecord: '＋ 录制轮切键',
+          boardRecording: '请按住 Alt 再按一个普通键（如 Alt+Q）；再点按钮或 Esc 取消',
+          boardInvalid: '轮切键必须只带 Alt：请按住 Alt，再按一个普通键。',
+          boardTitle: '会话轮切板', boardCurrent: '当前',
+          boardUntitled: '未命名会话', boardNoWorkspace: '未分组',
+          boardRemove: '从本次候选移除',
+          boardTransientHint: '按住 Alt 连按切换 · 松开 Alt 打开高亮会话 · Esc 取消 · Delete 移除',
+          boardPinnedHint: 'Enter 或点击打开 · 方向键移动 · Esc 取消 · Delete 移除',
+          boardNone: '本次启动还没有可轮切的会话：请先访问至少两个会话。',
+          boardFocus: '当前焦点在内嵌网页里，无法确认 Alt 松开；请先点回会话内容再按。',
+          boardGone: '高亮的会话已不可用，已取消切换。',
           record: '＋ 录制快捷键', recordingWindows: '请按 Ctrl + Alt/Shift + 字母或数字；再点按钮或 Esc 取消',
           recordingMac: '请按 Command + Option/Shift + 字母或数字；再点按钮或 Esc 取消',
           recordingLinux: '可尝试 Ctrl+/、Ctrl+Shift+, 或 Ctrl+Shift+.；再点按钮或 Esc 取消',
@@ -53,6 +76,20 @@ window.__ModuleLoader__.load({
           noDevtools: 'This action requires a supported Desktop developer bridge; use the application menu elsewhere.',
           panelTaken: 'Used by another shortcut', panelNone: 'No panels available',
           sessionHelp: 'Press the recent-conversation shortcut repeatedly to cycle within a short interval. Previous conversation toggles between the two most recently visited. Visit two conversations first. System Alt+Tab is unchanged.',
+          board: 'Session board', boardBack: 'Session board (backwards)', boardPin: 'Session board (pinned)',
+          boardSection: 'Session board (DSH NEXT / Windows)',
+          boardHelp: 'Record Alt + an ordinary key once (for example Alt+Q). Shift+Alt+Q moves backwards and Ctrl+Alt+Q pins the board; if any of the three is taken, nothing is saved. Hold Alt and tap the base key to move, release Alt to switch; Esc cancels.',
+          boardRecord: '＋ Record board key',
+          boardRecording: 'Hold Alt and press an ordinary key (for example Alt+Q); click again or Esc to cancel',
+          boardInvalid: 'The board key must use Alt only: hold Alt and press an ordinary key.',
+          boardTitle: 'Session board', boardCurrent: 'Current',
+          boardUntitled: 'Untitled conversation', boardNoWorkspace: 'No workspace',
+          boardRemove: 'Remove from this launch',
+          boardTransientHint: 'Hold Alt and tap to move · release Alt to open · Esc cancels · Delete removes',
+          boardPinnedHint: 'Enter or click to open · arrow keys move · Esc cancels · Delete removes',
+          boardNone: 'No conversations to switch between in this launch: visit at least two first.',
+          boardFocus: 'Focus is inside an embedded page, so the Alt release cannot be observed; click back into the conversation first.',
+          boardGone: 'The highlighted conversation is no longer available; nothing was opened.',
           record: '＋ Record shortcut', recordingWindows: 'Press Ctrl + Alt/Shift + letter or digit; click again or Esc to cancel',
           recordingMac: 'Press Command + Option/Shift + letter or digit; click again or Esc to cancel',
           recordingLinux: 'Try Ctrl+/, Ctrl+Shift+, or Ctrl+Shift+.; click again or Esc to cancel',
@@ -90,6 +127,11 @@ window.__ModuleLoader__.load({
       const devtoolsReady = () => desktopReady() || nextDeveloperReady();
       const pageReady = () => officialReady() || desktopReady();
       const fixedPanelAvailable = () => desktopReady() && ctx.shortcuts.platform === 'windows';
+      // The board commits on the Alt keyup, which is only observable when the
+      // main document has focus. That combination is verified on DSH NEXT
+      // Windows only, so every other runtime keeps the old actions untouched.
+      const switcherReady = () => nextDeveloperReady() && ctx.shortcuts.runtime === 'desktop' &&
+        ctx.shortcuts.platform === 'windows';
 
       // DSH owns keyboard dispatch, conflict checks and storage. Keep original
       // action IDs so each runtime's saved preferences remain untouched.
@@ -118,6 +160,9 @@ window.__ModuleLoader__.load({
         recentIds = recentIds.filter((id) => allowed.has(id));
         if (cycle && cycle.ids.some((id) => !allowed.has(id))) cycle = null;
         const id = currentSessionId();
+        // Revisiting a session that the board dropped puts it back in the
+        // candidate list; re-rendering the same page never does.
+        if (id) boardRemovedIds.delete(id);
         if (id === observedId && (!id || recentIds.includes(id))) return;
         if (id && allowed.has(id)) {
           recentIds = [id, ...recentIds.filter((other) => other !== id)];
@@ -162,6 +207,188 @@ window.__ModuleLoader__.load({
         cycle = null;
         if (current && previous) openVisibleSession(previous);
       };
+      // ── Session board ──────────────────────────────────────────────────
+      // NEXT Windows only. The native bridge forwards keydown and never the
+      // release, so a transient board can commit only while this document still
+      // receives the Alt keyup: the main process lets modifier keyup through and
+      // the board keeps the main frame focused. A trigger that came from an
+      // embedded frame cannot observe the release, so the board refuses to open
+      // instead of guessing with a timer.
+      const board = {
+        mode: null, ids: [], index: 0, hint: '', hintTimer: null,
+        snapshot: { mode: null, index: 0, cards: [], hint: '' },
+        listeners: new Set(), detach: null, previousFocus: null,
+      };
+      const boardSubscribe = (listener) => {
+        board.listeners.add(listener);
+        return () => { board.listeners.delete(listener); };
+      };
+      const boardSnapshot = () => board.snapshot;
+      const baseName = (path) => String(path ?? '').replace(/[/\\]+$/u, '').split(/[/\\]/u).pop() ?? '';
+      const boardCards = (ids) => {
+        const list = ctx.sessions.list.getSnapshot();
+        const groups = ctx.workspaces.list.getSnapshot().items ?? [];
+        const current = currentSessionId();
+        return ids.map((id) => {
+          const row = list.byId[id];
+          const group = groups.find((item) => Array.isArray(item.sessionIds) && item.sessionIds.includes(id));
+          const path = group?.path ?? row?.cwd ?? '';
+          return {
+            id,
+            title: row?.title?.trim() || t('boardUntitled'),
+            workspace: group?.title?.trim() || baseName(path) || t('boardNoWorkspace'),
+            current: id === current,
+          };
+        });
+      };
+      const publishBoard = () => {
+        board.snapshot = board.mode === null
+          ? { mode: null, index: 0, cards: [], hint: board.hint }
+          : { mode: board.mode, index: board.index, cards: boardCards(board.ids), hint: board.hint };
+        for (const listener of [...board.listeners]) listener();
+      };
+      const boardHint = (message) => {
+        board.hint = message;
+        publishBoard();
+        // The vm-based tests have no timers; a lingering hint is harmless there.
+        if (typeof setTimeout !== 'function') return;
+        if (board.hintTimer !== null) clearTimeout(board.hintTimer);
+        board.hintTimer = setTimeout(() => {
+          board.hintTimer = null;
+          board.hint = '';
+          publishBoard();
+        }, 2200);
+      };
+      const boardCandidates = () => {
+        syncRecent();
+        const current = currentSessionId();
+        const visible = new Set(visibleSessionIds());
+        if (!current || !visible.has(current)) return [];
+        const merged = [current, ...recentIds];
+        return merged.filter((id, index) => merged.indexOf(id) === index && visible.has(id) &&
+          (id === current || !boardRemovedIds.has(id)));
+      };
+      const moveBoard = (delta) => {
+        if (board.mode === null) return;
+        // The current conversation is the anchor and never joins the ring, so
+        // the board cannot navigate to where the user already is.
+        const ring = board.ids.length - 1;
+        if (ring < 1) return;
+        board.index = ((board.index - 1 + delta + ring) % ring) + 1;
+        publishBoard();
+      };
+      const commitBoard = () => {
+        if (board.mode === null) return;
+        const target = board.ids[board.index] ?? null;
+        closeBoard(false);
+        if (!target || target === currentSessionId()) return;
+        if (!openVisibleSession(target)) boardHint(t('boardGone'));
+      };
+      const closeBoard = (restoreFocus) => {
+        if (board.mode === null) return;
+        board.mode = null;
+        board.ids = [];
+        board.index = 0;
+        if (board.detach) board.detach();
+        board.detach = null;
+        publishBoard();
+        const previous = board.previousFocus;
+        board.previousFocus = null;
+        if (!restoreFocus || previous === null || previous?.isConnected === false) return;
+        if (typeof previous.focus !== 'function') return;
+        try { previous.focus(); }
+        catch (error) { console.error('kana-desktop-shortcuts: board focus restore failed', error); }
+      };
+      const removeBoardTarget = (id) => {
+        if (board.mode === null || typeof id !== 'string') return;
+        const at = board.ids.indexOf(id);
+        if (at === -1) return;
+        if (id !== currentSessionId()) boardRemovedIds.add(id);
+        const ids = board.ids.filter((other) => other !== id);
+        if (ids.length < 2) {
+          board.ids = ids;
+          board.index = 0;
+          closeBoard(false);
+          boardHint(t('boardNone'));
+          return;
+        }
+        let index = at < board.index ? board.index - 1 : board.index;
+        board.ids = ids;
+        board.index = Math.min(Math.max(index, 1), ids.length - 1);
+        publishBoard();
+      };
+      const boardKeyDown = (event) => {
+        if (board.mode === null) return;
+        if (event.isComposing || event.getModifierState?.('AltGraph')) return;
+        const altKey = event.code === 'AltLeft' || event.code === 'AltRight';
+        // Losing the modifier without the matching keyup means the release may
+        // never arrive; cancelling is the only outcome that cannot misfire.
+        if (board.mode === 'transient' && !altKey && !event.altKey) {
+          closeBoard(true);
+          return;
+        }
+        if (event.code === 'Escape') {
+          event.preventDefault();
+          event.stopPropagation();
+          closeBoard(true);
+          return;
+        }
+        if (event.code === 'Delete') {
+          if (event.ctrlKey || event.metaKey || event.repeat) return;
+          event.preventDefault();
+          event.stopPropagation();
+          removeBoardTarget(board.ids[board.index]);
+          return;
+        }
+        if (board.mode !== 'pinned') return;
+        if (event.code === 'Enter') {
+          event.preventDefault();
+          event.stopPropagation();
+          commitBoard();
+          return;
+        }
+        if (event.code === 'ArrowLeft' || event.code === 'ArrowRight') {
+          event.preventDefault();
+          event.stopPropagation();
+          moveBoard(event.code === 'ArrowRight' ? 1 : -1);
+        }
+      };
+      const boardKeyUp = (event) => {
+        if (board.mode !== 'transient') return;
+        if (event.code !== 'AltLeft' && event.code !== 'AltRight' && event.key !== 'Alt') return;
+        commitBoard();
+      };
+      const boardBlur = () => { closeBoard(false); };
+      const attachBoardInput = () => {
+        if (board.detach) return;
+        window.addEventListener('keydown', boardKeyDown, true);
+        window.addEventListener('keyup', boardKeyUp, true);
+        window.addEventListener('blur', boardBlur);
+        board.detach = () => {
+          window.removeEventListener('keydown', boardKeyDown, true);
+          window.removeEventListener('keyup', boardKeyUp, true);
+          window.removeEventListener('blur', boardBlur);
+          board.detach = null;
+        };
+      };
+      const openBoard = (mode) => {
+        if (!switcherReady() || !pageReady() || !document.hasFocus()) return false;
+        if (board.mode !== null) return true;
+        syncRecent();
+        const ids = boardCandidates();
+        if (ids.length < 2) {
+          boardHint(t('boardNone'));
+          return false;
+        }
+        board.mode = mode;
+        board.ids = ids;
+        board.index = 1;
+        board.previousFocus = document.activeElement ?? null;
+        attachBoardInput();
+        publishBoard();
+        return true;
+      };
+
       const pendingFrames = new Set();
       let focusEpoch = 0;
       ctx.effect(() => () => {
@@ -212,6 +439,9 @@ window.__ModuleLoader__.load({
           return true;
         });
       };
+      // A trigger forwarded from an embedded frame reports its source; the
+      // release of Alt never reaches this document in that case.
+      const boardFocusOk = (context) => context?.source !== 'iframe' && context?.source !== 'webview';
       const commands = [
         { id: ids[0], key: 'devtools', nativeOnly: true,
           run: () => {
@@ -242,8 +472,50 @@ window.__ModuleLoader__.load({
             run: () => { const panel = panelForDigit(digit); if (panel) ctx.layout.selectPanel(panel.id); },
             available: () => Boolean(panelForDigit(digit)) };
         }),
+        // The board records one base combination and derives the other two, so
+        // the three rows stay out of the ordinary shortcut list (`board: true`).
+        { id: boardIds[0], key: 'board', board: true, regions: ['page', 'editable', 'terminal'],
+          resolve: (context) => {
+            if (!switcherReady() || !pageReady() || !document.hasFocus() || context?.modal !== null) {
+              return { status: 'blocked', reason: 'board-unavailable' };
+            }
+            // An embedded frame cannot observe the Alt release; refuse rather
+            // than open a board that could not commit or cancel safely.
+            if (board.mode === null && !boardFocusOk(context)) {
+              boardHint(t('boardFocus'));
+              return { status: 'handled', run: () => {} };
+            }
+            return { status: 'handled', run: () => {
+              if (board.mode === null) openBoard('transient');
+              else moveBoard(1);
+            } };
+          } },
+        { id: boardIds[1], key: 'boardBack', board: true, regions: ['page', 'editable', 'terminal'],
+          resolve: (context) => {
+            if (!switcherReady() || !pageReady() || !document.hasFocus() || context?.modal !== null ||
+                board.mode === null) return { status: 'blocked', reason: 'board-closed' };
+            return { status: 'handled', run: () => moveBoard(-1) };
+          } },
+        { id: boardIds[2], key: 'boardPin', board: true, regions: ['page', 'editable', 'terminal'],
+          resolve: (context) => {
+            if (!switcherReady() || !pageReady() || !document.hasFocus() || context?.modal !== null) {
+              return { status: 'blocked', reason: 'board-unavailable' };
+            }
+            if (board.mode === null && !boardFocusOk(context)) {
+              boardHint(t('boardFocus'));
+              return { status: 'handled', run: () => {} };
+            }
+            return { status: 'handled', run: () => {
+              if (board.mode === null) openBoard('pinned');
+              // Pinning an open transient board keeps the highlight; pressing
+              // the combination again cancels and never commits implicitly.
+              else if (board.mode === 'transient') { board.mode = 'pinned'; publishBoard(); }
+              else closeBoard(true);
+            } };
+          } },
       ];
-      const enabledCommands = () => commands.filter((command) => !command.nativeOnly || devtoolsReady());
+      const enabledCommands = () => commands.filter((command) =>
+        (!command.nativeOnly || devtoolsReady()) && (!command.board || switcherReady()));
       const commandLabel = (command) => command.label?.() ?? t(command.key);
       // Lexical handles Ctrl+Shift+Z (redo) before the shortcuts service's
       // window-bubble listener. Route only our explicitly assigned new actions
@@ -260,6 +532,8 @@ window.__ModuleLoader__.load({
             event.ctrlKey && 'control', event.altKey && 'alt', event.shiftKey && 'shift', event.metaKey && 'meta',
           ].filter(Boolean);
           for (const command of commands.slice(3)) {
+            // Board keys are native-desktop only and never recorded on web.
+            if (command.board) continue;
             const binding = ctx.shortcuts.catalog.getSnapshot().find((row) => row.id === command.id)?.binding;
             if (!binding || binding.secondCode || binding.code !== event.code ||
                 binding.modifiers?.length !== modifiers.length ||
@@ -280,16 +554,19 @@ window.__ModuleLoader__.load({
         document.addEventListener('keydown', onEditableKey, true);
         return () => document.removeEventListener('keydown', onEditableKey, true);
       }, 'kana shortcuts: editable capture');
+      const commandResolve = (command) => command.resolve ?? (({ modal }) => (
+        !pageReady() || (command.nativeOnly && !devtoolsReady()) || !document.hasFocus() ||
+        modal !== null || (command.available && !command.available())
+          ? { status: 'blocked', reason: 'focus-modal-or-session' }
+          : { status: 'handled', run: command.run }
+      ));
       const registerCommands = () => {
         const disposers = [];
         try {
           for (const command of enabledCommands()) disposers.push(ctx.shortcuts.register({
             id: command.id, label: () => commandLabel(command), aliases: [command.id, commandLabel(command)],
             defaults: {}, regions: command.regions ?? ['page'], modals: [],
-            resolve: ({ modal }) => !pageReady() || (command.nativeOnly && !devtoolsReady()) ||
-              !document.hasFocus() || modal !== null || (command.available && !command.available())
-              ? { status: 'blocked', reason: 'focus-modal-or-session' }
-              : { status: 'handled', run: command.run },
+            resolve: commandResolve(command),
           }));
           return () => { for (const dispose of disposers.reverse()) dispose(); };
         } catch (error) {
@@ -355,9 +632,16 @@ window.__ModuleLoader__.load({
         const [busy, setBusy] = React.useState(false);
         const [message, setMessage] = React.useState('');
         const recorder = React.useRef(null);
+        // The board records one combination and derives the other two, so its
+        // state stays separate from the single-action rows above.
+        const [boardRecording, setBoardRecording] = React.useState(false);
+        const [boardRecordReady, setBoardRecordReady] = React.useState(false);
+        const [boardBusy, setBoardBusy] = React.useState(false);
+        const [boardMessage, setBoardMessage] = React.useState('');
+        const boardRecorder = React.useRef(null);
         const valid = pageReady();
         const available = valid && config.status === 'ready' && !busy;
-        const visible = enabledCommands();
+        const visible = enabledCommands().filter((command) => !command.board);
         const rows = visible.map((command) => ({ ...command, row: catalog.find((row) => row.id === command.id) }));
         const selectedCommand = visible.some((command) => command.id === selected) ? selected : visible[0]?.id;
         const recordingHint = () => t(ctx.shortcuts.platform === 'macos' ? 'recordingMac' :
@@ -385,6 +669,65 @@ window.__ModuleLoader__.load({
             setMessage(t('failed'));
           } finally {
             setBusy(false);
+          }
+        };
+        const boardBaseRow = catalog.find((row) => row.id === boardIds[0]);
+        const boardBindingText = () => boardBaseRow?.keys?.length ? boardBaseRow.keys.join('') : t('empty');
+        // The three derived combinations are saved together: either all of them
+        // are free and get written, or nothing changes at all.
+        const saveBoardBinding = async (candidate) => {
+          if (!switcherReady() || config.status !== 'ready' || busy || boardBusy) return;
+          const modifiers = [['alt'], ['alt', 'shift'], ['control', 'alt']];
+          const targets = boardIds.map((id, index) => ({
+            id,
+            binding: candidate === null ? null : { code: candidate.code, modifiers: modifiers[index] },
+          }));
+          setBoardBusy(true);
+          try {
+            for (const target of targets) {
+              if (target.binding === null) continue;
+              const description = ctx.shortcuts.describeBinding(target.binding);
+              const conflicts = description.conflicts.filter((id) => !boardIds.includes(id));
+              if (description.issue !== null || conflicts.length > 0) {
+                setBoardMessage(description.issue !== null ? t('invalidBinding')
+                  : t('conflict', { commands: conflicts.map(labelFor).join(', ') }));
+                return;
+              }
+            }
+            const previous = targets.map((target) => ({
+              id: target.id,
+              binding: catalog.find((row) => row.id === target.id)?.binding ?? null,
+            }));
+            let revision = config.revision;
+            const applied = [];
+            for (const target of targets) {
+              const result = await ctx.shortcuts.edit(target.binding === null
+                ? { type: 'reset', id: target.id }
+                : { type: 'set', id: target.id, binding: target.binding }, revision);
+              if (result.status !== 'saved') {
+                for (const done of applied.reverse()) {
+                  const before = previous.find((entry) => entry.id === done.id);
+                  try {
+                    const restore = await ctx.shortcuts.edit(before.binding === null
+                      ? { type: 'reset', id: done.id }
+                      : { type: 'set', id: done.id, binding: before.binding }, revision);
+                    if (restore?.snapshot?.revision) revision = restore.snapshot.revision;
+                  } catch (error) {
+                    console.error('kana-desktop-shortcuts: board rollback failed', error);
+                  }
+                }
+                setBoardMessage(failureText(result));
+                return;
+              }
+              revision = result.snapshot?.revision ?? revision;
+              applied.push(target);
+            }
+            setBoardMessage(t(candidate === null ? 'cleared' : 'saved'));
+          } catch (error) {
+            console.error('kana-desktop-shortcuts: board binding save failed', error);
+            setBoardMessage(t('failed'));
+          } finally {
+            setBoardBusy(false);
           }
         };
         React.useEffect(() => {
@@ -465,6 +808,66 @@ window.__ModuleLoader__.load({
         React.useEffect(() => {
           if (recordingId !== null && recordReady) recorder.current?.focus();
         }, [recordingId, recordReady]);
+        // Alt-only recorder for the board. The ordinary recorder requires a
+        // primary modifier, so it can never capture the base combination.
+        React.useEffect(() => {
+          if (!boardRecording) return undefined;
+          let disposed = false;
+          let pending = null;
+          setBoardRecordReady(false);
+          const down = (event) => {
+            if (event.key === 'Escape' && !event.ctrlKey && !event.altKey && !event.shiftKey && !event.metaKey) {
+              event.preventDefault();
+              event.stopPropagation();
+              if (!event.repeat) { setBoardMessage(t('cancelled')); setBoardRecording(false); }
+              return;
+            }
+            if (document.activeElement !== boardRecorder.current ||
+                event.isComposing || event.getModifierState?.('AltGraph')) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (event.repeat) return;
+            if (/^(Control|Alt|Shift|Meta)(Left|Right)$/.test(event.code)) return;
+            const codeAllowed = /^(Key[A-Z]|Digit[0-9]|F(?:[1-9]|1[0-2])|Slash|Comma|Period|Backquote|Minus|Equal|BracketLeft|BracketRight|Semicolon|Quote|Backslash)$/.test(event.code);
+            const altOnly = event.altKey && !event.ctrlKey && !event.shiftKey && !event.metaKey;
+            if (!codeAllowed || !altOnly) {
+              pending = null;
+              setBoardMessage(t('boardInvalid'));
+              return;
+            }
+            pending = { code: event.code, modifiers: ['alt'] };
+          };
+          const up = (event) => {
+            if (document.activeElement !== boardRecorder.current) return;
+            event.preventDefault();
+            event.stopPropagation();
+            if (pending === null || pending.code !== event.code) return;
+            const candidate = pending;
+            pending = null;
+            setBoardRecording(false);
+            void saveBoardBinding(candidate);
+          };
+          Promise.resolve(ctx.shortcuts.recording(true)).then(() => {
+            if (disposed) { void ctx.shortcuts.recording(false).catch(() => {}); return; }
+            document.addEventListener('keydown', down, true);
+            document.addEventListener('keyup', up, true);
+            setBoardRecordReady(true);
+          }, (error) => {
+            if (disposed) return;
+            console.error('kana-desktop-shortcuts: board recorder unavailable', error);
+            setBoardMessage(t('failed'));
+            setBoardRecording(false);
+          });
+          return () => {
+            disposed = true;
+            document.removeEventListener('keydown', down, true);
+            document.removeEventListener('keyup', up, true);
+            void ctx.shortcuts.recording(false).catch(() => {});
+          };
+        }, [boardRecording]);
+        React.useEffect(() => {
+          if (boardRecording && boardRecordReady) boardRecorder.current?.focus();
+        }, [boardRecording, boardRecordReady]);
         if (!valid) return React.createElement('div', { role: 'status', style: { padding: '20px 24px', color: colors.text } },
           React.createElement('p', null, t('unsupported')),
           React.createElement('code', { style: { fontSize: 12, color: colors.secondary } },
@@ -527,10 +930,96 @@ window.__ModuleLoader__.load({
             panels.length > 1 && React.createElement('li', { key: 'last' },
               `${fixedPanelAvailable() ? 'Ctrl + 9' : '9'} — ${panels.at(-1).label}`,
               fixedPanelAvailable() && occupied('Digit9') ? ` (${t('panelTaken')})` : '')),
+        switcherReady() && React.createElement('div', { 'data-kana-board-settings': '' },
+          React.createElement('h3', { style: { margin: '24px 0 8px', fontSize: 16 } }, t('boardSection')),
+          React.createElement('p', { style: { color: colors.secondary, fontSize: 13 } }, t('boardHelp')),
+          React.createElement('div', { style: { display: 'flex', alignItems: 'center', flexWrap: 'wrap',
+            gap: 12, padding: '14px 0', borderTop: `1px solid ${colors.border}` } },
+          React.createElement('span', { style: { minWidth: 150 } }, t('board')),
+          React.createElement('kbd', { style: { flex: 1, color: colors.secondary } }, boardBindingText()),
+          React.createElement('button', {
+            ref: boardRecorder, type: 'button',
+            'aria-label': boardRecording ? t('boardRecording') : t('boardRecord'),
+            onClick: () => {
+              if (boardRecording) { setBoardRecording(false); setBoardMessage(t('cancelled')); return; }
+              if (!available || boardBusy) return;
+              setBoardMessage('');
+              setBoardRecordReady(false);
+              setBoardRecording(true);
+            },
+            disabled: !boardRecording && (!available || boardBusy),
+            style: { font: 'inherit', color: boardRecording ? colors.accent : colors.text,
+              background: colors.surface, border: `1px solid ${boardRecording ? colors.accent : colors.border}`,
+              borderRadius: 8, padding: '7px 12px', cursor: 'pointer' },
+          }, boardRecording ? boardRecordReady ? t('boardRecording') : t('preparing') : t('boardRecord')),
+          button(t('clear'), () => void saveBoardBinding(null),
+            !available || boardRecording || boardBusy || !boardBaseRow?.binding)),
+          boardMessage && React.createElement('p', { role: 'status', style: { color: colors.error } }, boardMessage)),
         message && React.createElement('p', { role: 'status', style: { color: colors.error } }, message));
+      }
+
+      // Rendered inside the shell overlay, so it covers this app window only.
+      // Deliberately not a dialog: DSH reads an aria-modal element as a modal
+      // and would block this plugin's own commands while the board is open.
+      function SessionBoard() {
+        const state = React.useSyncExternalStore(boardSubscribe, boardSnapshot);
+        const root = React.useRef(null);
+        React.useEffect(() => {
+          if (state.mode !== null) root.current?.focus?.();
+        }, [state.mode]);
+        if (state.mode === null) {
+          if (state.hint === '') return null;
+          return React.createElement('div', {
+            role: 'status', 'aria-live': 'polite', 'data-kana-session-board': 'hint',
+            style: { position: 'absolute', left: '50%', bottom: 32, transform: 'translateX(-50%)',
+              pointerEvents: 'none', padding: '8px 14px', borderRadius: 10, fontSize: 13,
+              color: colors.text, background: colors.surface, border: `1px solid ${colors.border}`,
+              boxShadow: '0 8px 24px rgb(0 0 0 / 0.18)' },
+          }, state.hint);
+        }
+        return React.createElement('div', {
+          'data-kana-session-board': state.mode, ref: root, tabIndex: -1,
+          onClick: (event) => { if (event.target === event.currentTarget) closeBoard(true); },
+          style: { position: 'absolute', inset: 0, display: 'flex', flexDirection: 'column',
+            alignItems: 'center', justifyContent: 'center', gap: 14, outline: 'none',
+            background: 'rgb(0 0 0 / 0.28)' },
+        },
+        React.createElement('div', {
+          role: 'listbox', 'aria-label': t('boardTitle'),
+          style: { display: 'flex', alignItems: 'stretch', gap: 12, padding: '16px 20px',
+            maxWidth: 'calc(100% - 48px)', overflowX: 'auto', overflowY: 'hidden', borderRadius: 16,
+            background: colors.surface, border: `1px solid ${colors.border}`,
+            boxShadow: '0 18px 48px rgb(0 0 0 / 0.35)' },
+        }, state.cards.map((card, index) => React.createElement('div', {
+          key: card.id, role: 'option', 'aria-selected': index === state.index,
+          'aria-label': `${card.title} — ${card.workspace}`,
+          onClick: () => { board.index = index; commitBoard(); },
+          style: { display: 'flex', flexDirection: 'column', gap: 6, flex: '0 0 auto', width: 190,
+            padding: '12px 14px', borderRadius: 12, cursor: 'pointer',
+            border: `2px solid ${index === state.index ? colors.accent : colors.border}`,
+            background: 'var(--dsw-alias-bg-layer-1)' },
+        },
+        React.createElement('div', { style: { fontSize: 13, fontWeight: 600, color: colors.text,
+          overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, card.title),
+        React.createElement('div', { style: { fontSize: 12, color: colors.secondary, overflow: 'hidden',
+          textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, card.workspace),
+        React.createElement('div', { style: { display: 'flex', alignItems: 'center',
+          justifyContent: 'space-between', gap: 8, marginTop: 4 } },
+        card.current
+          ? React.createElement('span', { style: { fontSize: 11, color: colors.accent } }, t('boardCurrent'))
+          : React.createElement('span', null),
+        React.createElement('button', {
+          type: 'button', 'aria-label': `${t('boardRemove')}: ${card.title}`,
+          onClick: (event) => { event.stopPropagation(); removeBoardTarget(card.id); },
+          style: { font: 'inherit', lineHeight: 1, padding: '2px 7px', borderRadius: 6, cursor: 'pointer',
+            color: colors.secondary, background: 'transparent', border: `1px solid ${colors.border}` },
+        }, '×'))))),
+        React.createElement('p', { style: { margin: 0, fontSize: 12, color: colors.text } },
+          t(state.mode === 'pinned' ? 'boardPinnedHint' : 'boardTransientHint')));
       }
       ctx.effect(() => {
         let disposeSlot;
+        let disposeBoard;
         let disposeCommands;
         let registeredKind;
         const sync = () => {
@@ -545,6 +1034,17 @@ window.__ModuleLoader__.load({
             disposeSlot();
             disposeSlot = undefined;
           }
+          // The board lives in the shell overlay so it only covers this app
+          // window, and only where the Alt release is provably observable.
+          if (switcherReady() && !disposeBoard) {
+            disposeBoard = ctx.slots.inject('shell.overlay', () => ctx.slots.register({
+              name: 'shell.overlay', id: 'kana.session-board',
+            }, SessionBoard));
+          } else if (!switcherReady() && disposeBoard) {
+            closeBoard(false);
+            disposeBoard();
+            disposeBoard = undefined;
+          }
           if (registeredKind !== kind) {
             disposeCommands?.();
             disposeCommands = kind === undefined ? undefined : registerCommands();
@@ -556,7 +1056,7 @@ window.__ModuleLoader__.load({
         observer.observe(document.documentElement, {
           attributes: true, attributeFilter: ['data-dsh-desktop-mode'], childList: true, subtree: true,
         });
-        return () => { observer.disconnect(); disposeCommands?.(); disposeSlot?.(); };
+        return () => { observer.disconnect(); disposeCommands?.(); disposeSlot?.(); closeBoard(false); disposeBoard?.(); };
       }, 'kana shortcuts: DSH settings and commands');
     },
   }),
