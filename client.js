@@ -301,9 +301,12 @@ window.__ModuleLoader__.load({
       };
       const removeBoardTarget = (id) => {
         if (board.mode === null || typeof id !== 'string') return;
+        // The current conversation anchors the board: it is the first card and
+        // never joins the ring, so it cannot be dropped from this interaction.
+        if (id === currentSessionId()) return;
         const at = board.ids.indexOf(id);
         if (at === -1) return;
-        if (id !== currentSessionId()) boardRemovedIds.add(id);
+        boardRemovedIds.add(id);
         const ids = board.ids.filter((other) => other !== id);
         if (ids.length < 2) {
           board.ids = ids;
@@ -1008,7 +1011,7 @@ window.__ModuleLoader__.load({
         card.current
           ? React.createElement('span', { style: { fontSize: 11, color: colors.accent } }, t('boardCurrent'))
           : React.createElement('span', null),
-        React.createElement('button', {
+        card.current ? null : React.createElement('button', {
           type: 'button', 'aria-label': `${t('boardRemove')}: ${card.title}`,
           onClick: (event) => { event.stopPropagation(); removeBoardTarget(card.id); },
           style: { font: 'inherit', lineHeight: 1, padding: '2px 7px', borderRadius: 6, cursor: 'pointer',

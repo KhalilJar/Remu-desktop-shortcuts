@@ -649,6 +649,36 @@ test('pinned board outlives the Alt release and opens only on Enter', () => {
   for (const off of environment.disposed.reverse()) off();
 });
 
+test('the current conversation anchors the board and cannot be dropped', () => {
+  const environment = load(nextWindows);
+  visitBoard(environment, ['s2', 's3']);
+  environment.actions.length = 0;
+  boardCommand(environment).resolve({ modal: null }).run();
+  const node = boardNode(environment);
+  assert.equal(cardsOf(node).length, 3);
+
+  const markers = (cards) => cards.map((card) => {
+    const footer = card.children.at(-1);
+    const badge = footer.children[0];
+    return { badge: badge?.children?.[0] ?? null, hasRemove: footer.children[1] != null };
+  });
+
+  // Exactly one card is the current conversation, and it carries no remove control.
+  const before = markers(cardsOf(node));
+  assert.equal(before.filter((card) => !card.hasRemove).length, 1);
+  assert.equal(before[0].hasRemove, false);
+  assert.equal(before.slice(1).every((card) => card.hasRemove), true);
+
+  // Delete only ever targets the highlighted candidate, never the anchor.
+  fireWindow(environment, 'keydown', keyEvent({ code: 'Delete', altKey: true }));
+  const after = markers(cardsOf(boardNode(environment)));
+  assert.equal(after.length, 2);
+  assert.equal(after[0].hasRemove, false);
+  assert.equal(after.filter((card) => !card.hasRemove).length, 1);
+  assert.deepEqual(environment.actions, []);
+  for (const off of environment.disposed.reverse()) off();
+});
+
 test('Delete drops a candidate without archiving it, and revisiting restores it', () => {
   const environment = load(nextWindows);
   visitBoard(environment, ['s2', 's1']);
