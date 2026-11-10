@@ -6,6 +6,7 @@
 /.cache/
 /.pnpm-store/
 *.tsbuildinfo
+SESSION_SWITCHER_PLAN.md
 
 # Logs and temporary files
 *.log
