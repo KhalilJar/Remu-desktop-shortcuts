@@ -1,0 +1,87 @@
+{
+  "format": 1,
+  "title": {
+    "en": "Remu Desktop Shortcuts",
+    "zh": "Remu 桌面快捷键"
+  },
+  "description": {
+    "en": "Keyboard-first shortcuts for DSH Desktop, including the Alt+Tab style session switcher.",
+    "zh": "给 DSH Desktop 用的快捷键插件，含 Alt+Tab 风格的会话轮切板。"
+  },
+  "metadata": {
+    "categories": {
+      "productivity": {
+        "title": {
+          "en": "Productivity",
+          "zh": "效率"
+        }
+      }
+    },
+    "labels": {
+      "windows": {
+        "title": {
+          "en": "Windows",
+          "zh": "Windows"
+        }
+      },
+      "desktop": {
+        "title": {
+          "en": "Desktop",
+          "zh": "桌面端"
+        }
+      },
+      "keyboard": {
+        "title": {
+          "en": "Keyboard",
+          "zh": "键盘"
+        }
+      }
+    }
+  },
+  "plugins": [
+    {
+      "name": "kana-desktop-shortcuts",
+      "title": {
+        "en": "Remu Desktop Shortcuts",
+        "zh": "Remu 桌面快捷键"
+      },
+      "description": {
+        "en": "Converts the moments you reach for the mouse into shortcuts you pick yourself: back to the conversation, focus the composer, switch pages, open DevTools, and a session switcher that holds Alt and lets go to commit (DSH NEXT on Windows).",
+        "zh": "把「又想伸手拿鼠标」的时刻变成你自己选的组合键：返回会话、聚焦输入框、切换功能页、打开 DevTools，以及按住 Alt 扫视、松手才切换的会话轮切板（DSH NEXT + Windows）。"
+      },
+      "icon": "../icon.svg",
+      "author": "KhalilJar",
+      "homepage": "https://github.com/KhalilJar/Remu-desktop-shortcuts",
+      "repository": {
+        "url": "https://github.com/KhalilJar/Remu-desktop-shortcuts"
+      },
+      "metadata": {
+        "category": "productivity",
+        "keywords": [
+          "shortcuts",
+          "keyboard",
+          "session-switcher",
+          "alt-tab",
+          "devtools",
+          "desktop"
+        ],
+        "labels": [
+          "windows",
+          "desktop",
+          "keyboard"
+        ]
+      },
+      "versions": [
+        {
+          "version": "0.4.7",
+          "publishTimestamp": 1794402362,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/KhalilJar/Remu-desktop-shortcuts",
+            "commit": "44a7589d73cdd327f09512474772e6f91bdf9900"
+          }
+        }
+      ]
+    }
+  ]
+}
