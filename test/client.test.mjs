@@ -38,6 +38,7 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
     addEventListener() {}, focus() { actions.push('content-focus'); } };
   const documentListeners = new Map();
   const windowListeners = new Map();
+  const captureCalls = [];
   const document = { body: { dataset: mode == null ? {} : { dshDesktopMode: mode } }, documentElement: {},
     activeElement: null,
     hasFocus() { return this.focused !== false; },
@@ -128,7 +129,7 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
       runtime, platform,
       register(command) { commands.push(command); return () => commands.splice(commands.indexOf(command), 1); },
       edit(operation, revision) { edits.push({ operation, revision }); return Promise.resolve({ status: 'saved' }); },
-      recording() { return Promise.resolve(); },
+      recording(active) { captureCalls.push(active); return Promise.resolve(); },
       describeBinding(binding) { return { binding, issue: null, conflicts: catalog.filter((row) =>
         row.binding?.code === binding.code && row.binding.modifiers.join(',') === binding.modifiers.join(','))
         .map((row) => row.id) }; },
@@ -190,7 +191,7 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
   return { commands, slots, actions, disposed, edits, catalog, document, observers, stateUpdates,
     fixedInputs, frames, sidebarPanels, mainPanels, slotListeners, fixedRows, panelInfo,
     selected, selectedListeners, sessionList, sessionRows, listListeners, workspaceList, workspaceListeners,
-    scrollAttributes, documentListeners, windowListeners };
+    scrollAttributes, documentListeners, windowListeners, captureCalls };
 }
 
 function descendants(node) {
@@ -569,6 +570,11 @@ const overlaySlot = (environment) => environment.slots.find((slot) => slot.optio
 const boardNode = (environment) => descendants(overlaySlot(environment).component())
   .find((node) => typeof node.props?.['data-kana-session-board'] === 'string');
 
+// A closed board may still leave a diagnostic hint node behind, so tests ask
+// whether the board itself is on screen instead of whether a node exists.
+const boardOpen = (environment) => ['transient', 'pinned']
+  .includes(boardNode(environment)?.props?.['data-kana-session-board']);
+
 const fireWindow = (environment, type, event) => {
   for (const listener of environment.windowListeners.get(type) ?? []) listener(event);
 };
@@ -603,26 +609,124 @@ test('session board exists only on NEXT Windows and commits exactly once on the 
   // The release is consumed once; a stale second keyup must not navigate again.
   fireWindow(environment, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
   assert.deepEqual(environment.actions, ['open:s2']);
-  assert.equal(boardNode(environment), undefined);
+  assert.equal(boardOpen(environment), false);
   for (const off of environment.disposed.reverse()) off();
 });
 
-test('session board moves backwards around the ring and cancels without navigating', () => {
+test('the open board holds the desktop keyboard capture and moves itself', async () => {
+  const environment = load(nextWindows);
+  environment.catalog.push({ id: 'kana.shortcuts.session-board', binding: { code: 'KeyQ', modifiers: ['alt'] } });
+  visitBoard(environment, ['s2', 's3', 's1']);
+  environment.actions.length = 0;
+  boardCommand(environment).resolve({ modal: null }).run();
+  // The window menu keeps the Alt release to itself, so the board asks the
+  // desktop bridge to stop honouring menu mnemonics while it is open.
+  assert.deepEqual(environment.captureCalls, [true]);
+  await Promise.resolve();
+  // With the capture held the native dispatcher stays quiet: the recorded base
+  // key steps forward and Shift reverses it.
+  fireWindow(environment, 'keydown', keyEvent({ code: 'KeyQ', altKey: true }));
+  assert.deepEqual(cardsOf(boardNode(environment)).map((card) => card.props['aria-selected']),
+    [false, false, true]);
+  fireWindow(environment, 'keydown', keyEvent({ code: 'KeyQ', altKey: true, shiftKey: true }));
+  assert.deepEqual(environment.actions, []);
+  fireWindow(environment, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
+  assert.deepEqual(environment.actions, ['open:s3']);
+  assert.deepEqual(environment.captureCalls, [true, false]);
+  for (const off of environment.disposed.reverse()) off();
+});
+
+test('a fast tap switches like Alt+Tab even before the capture lands', async () => {
+  const environment = load(nextWindows);
+  environment.catalog.push({ id: 'kana.shortcuts.session-board', binding: { code: 'KeyQ', modifiers: ['alt'] } });
+  visitBoard(environment, ['s2', 's3', 's1']);
+  environment.actions.length = 0;
+  boardCommand(environment).resolve({ modal: null }).run();
+  // Alt+Q released at once: the Alt release never reaches the document, but the
+  // base key's own release still does, so the tap commits to the last session.
+  fireWindow(environment, 'keyup', keyEvent({ code: 'KeyQ', key: 'q' }));
+  assert.deepEqual(environment.actions, ['open:s3']);
+  assert.equal(boardOpen(environment), false);
+  await Promise.resolve();
+  // The late confirmation is handed straight back instead of leaving the window
+  // in recording mode.
+  assert.deepEqual(environment.captureCalls, [true, false]);
+  for (const off of environment.disposed.reverse()) off();
+});
+
+test('the switcher is a rectangle that grows wider then wraps into rows', () => {
+  const panelOf = (environment) => descendants(overlaySlot(environment).component())
+    .find((node) => node.props?.role === 'listbox');
+
+  const environment = load(nextWindows);
+  visitBoard(environment, ['s2', 's3']);
+  boardCommand(environment).resolve({ modal: null }).run();
+  const narrow = panelOf(environment);
+  // Three candidates: a single row, shaped to the count instead of a fixed strip.
+  assert.equal(narrow.props.style.gridTemplateColumns, 'repeat(3, 190px)');
+  assert.equal(narrow.props.style.maxHeight, 124);
+  assert.equal(narrow.props.style.overflowY, 'hidden');
+  for (const off of environment.disposed.reverse()) off();
+
+  const wide = load(nextWindows);
+  for (const [index, id] of ['s4', 's5', 's6', 's7', 's8', 's9'].entries()) {
+    wide.sessionRows[id] = { id, origin: 'root', blank: false, updatedAt: index };
+    wide.sessionList.ids.push(id);
+    wide.sessionList.byId[id] = wide.sessionRows[id];
+  }
+  wide.workspaceList.items[0].sessionIds = wide.sessionList.ids;
+  visitBoard(wide, ['s2', 's3', 's4', 's5', 's6', 's7', 's8', 's9']);
+  boardCommand(wide).resolve({ modal: null }).run();
+  const grid = panelOf(wide);
+  // Nine candidates: the row stops at five cards and the rest wrap underneath.
+  assert.equal(grid.props.style.gridTemplateColumns, 'repeat(5, 190px)');
+  assert.equal(grid.props.style.maxHeight, 228);
+  assert.equal(cardsOf(grid).length, 9);
+  for (const off of wide.disposed.reverse()) off();
+});
+
+test('a tap whose release arrives before the board opens still switches', () => {
+  const environment = load(nextWindows);
+  environment.catalog.push({ id: 'kana.shortcuts.session-board', binding: { code: 'KeyQ', modifiers: ['alt'] } });
+  visitBoard(environment, ['s2', 's3', 's1']);
+  environment.actions.length = 0;
+  // The native dispatcher is slower than the fingers: both keys are already up
+  // by the time this document is told the base key was pressed.
+  fireWindow(environment, 'keydown', keyEvent({ code: 'KeyQ', altKey: true }));
+  fireWindow(environment, 'keyup', keyEvent({ code: 'KeyQ', key: 'q' }));
+  boardCommand(environment).resolve({ modal: null }).run();
+  // No board is opened - nobody could close it - the switch happens directly.
+  assert.equal(boardOpen(environment), false);
+  assert.deepEqual(environment.actions, ['open:s3']);
+  for (const off of environment.disposed.reverse()) off();
+});
+
+test('session board cycles every card, including the conversation the user is in', () => {
   const environment = load(nextWindows);
   visitBoard(environment, ['s2', 's3', 's1']);
   environment.actions.length = 0;
   boardCommand(environment).resolve({ modal: null }).run();
+  // "Previous session" is the first stop; one step back from there reaches the
+  // conversation already open, so committing must not reload it.
   assert.equal(boardCommand(environment, '-back').resolve({ modal: null }).status, 'handled');
   boardCommand(environment, '-back').resolve({ modal: null }).run();
   fireWindow(environment, 'keyup', keyEvent({ code: 'AltRight', key: 'Alt' }));
-  // Three candidates start at "the previous session" (s3); one step back wraps to s2.
+  assert.deepEqual(environment.actions, []);
+
+  // Two steps back wrap past the current conversation onto the oldest one, which
+  // is what lets a long enough run come back to where the user started.
+  environment.actions.length = 0;
+  boardCommand(environment).resolve({ modal: null }).run();
+  boardCommand(environment, '-back').resolve({ modal: null }).run();
+  boardCommand(environment, '-back').resolve({ modal: null }).run();
+  fireWindow(environment, 'keyup', keyEvent({ code: 'AltRight', key: 'Alt' }));
   assert.deepEqual(environment.actions, ['open:s2']);
 
   environment.actions.length = 0;
   boardCommand(environment).resolve({ modal: null }).run();
   assert.equal(boardNode(environment).props['data-kana-session-board'], 'transient');
   fireWindow(environment, 'keydown', keyEvent({ code: 'Escape' }));
-  assert.equal(boardNode(environment), undefined);
+  assert.equal(boardOpen(environment), false);
   assert.deepEqual(environment.actions, []);
   for (const off of environment.disposed.reverse()) off();
 });
@@ -644,7 +748,7 @@ test('pinned board outlives the Alt release and opens only on Enter', () => {
   environment.actions.length = 0;
   boardCommand(environment, '-pin').resolve({ modal: null }).run();
   boardCommand(environment, '-pin').resolve({ modal: null }).run();
-  assert.equal(boardNode(environment), undefined);
+  assert.equal(boardOpen(environment), false);
   assert.deepEqual(environment.actions, []);
   for (const off of environment.disposed.reverse()) off();
 });
@@ -704,7 +808,7 @@ test('board does not guess a conversation when fewer than two were visited', () 
   boardCommand(environment).resolve({ modal: null }).run();
   const node = boardNode(environment);
   assert.equal(node.props['data-kana-session-board'], 'hint');
-  assert.deepEqual(node.children, ['boardNone']);
+  assert.equal(node.children[0], 'boardNone');
   assert.deepEqual(environment.actions, []);
   for (const off of environment.disposed.reverse()) off();
 });

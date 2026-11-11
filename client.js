@@ -214,10 +214,29 @@ window.__ModuleLoader__.load({
       // the board keeps the main frame focused. A trigger that came from an
       // embedded frame cannot observe the release, so the board refuses to open
       // instead of guessing with a timer.
+      // Shape limits of the switcher rectangle: five cards per row, three rows
+      // on screen before the list starts scrolling vertically.
+      const boardMaxColumns = 5;
+      const boardMaxRows = 3;
+      const boardCardHeight = 92;
       const board = {
         mode: null, ids: [], index: 0, hint: '', hintTimer: null,
         snapshot: { mode: null, index: 0, cards: [], hint: '' },
         listeners: new Set(), detach: null, previousFocus: null,
+        // Capture states: `pending` while the bridge confirms the request,
+        // `active` once the window menu really stopped eating the Alt release.
+        capturePending: false, captureActive: false,
+      };
+      // The native dispatcher reaches this document through an IPC round trip, so
+      // a fast tap can finish releasing both keys before the board is created.
+      // The dispatcher consumes the base key's own release, but the Alt release
+      // still reaches the page, so both are recorded for the whole session and the
+      // board can tell that the tap already finished.
+      const keyWatch = { baseUpAt: 0, altUpAt: 0, lastBaseDownAt: 0 };
+      const tapAlreadyReleased = () => {
+        if (keyWatch.lastBaseDownAt === 0) return false;
+        const upAt = Math.max(keyWatch.baseUpAt, keyWatch.altUpAt);
+        return upAt > 0 && upAt >= keyWatch.lastBaseDownAt && Date.now() - upAt <= 500;
       };
       const boardSubscribe = (listener) => {
         board.listeners.add(listener);
@@ -270,11 +289,11 @@ window.__ModuleLoader__.load({
       };
       const moveBoard = (delta) => {
         if (board.mode === null) return;
-        // The current conversation is the anchor and never joins the ring, so
-        // the board cannot navigate to where the user already is.
-        const ring = board.ids.length - 1;
-        if (ring < 1) return;
-        board.index = ((board.index - 1 + delta + ring) % ring) + 1;
+        // The ring covers every card, including the conversation the user is in
+        // right now, so a long enough run brings them back like Alt+Tab does.
+        const total = board.ids.length;
+        if (total < 2) return;
+        board.index = ((board.index + delta) % total + total) % total;
         publishBoard();
       };
       const commitBoard = () => {
@@ -291,6 +310,7 @@ window.__ModuleLoader__.load({
         board.index = 0;
         if (board.detach) board.detach();
         board.detach = null;
+        stopBoardCapture();
         publishBoard();
         const previous = board.previousFocus;
         board.previousFocus = null;
@@ -317,13 +337,67 @@ window.__ModuleLoader__.load({
         }
         let index = at < board.index ? board.index - 1 : board.index;
         board.ids = ids;
-        board.index = Math.min(Math.max(index, 1), ids.length - 1);
+        board.index = Math.min(Math.max(index, 0), ids.length - 1);
         publishBoard();
+      };
+      // The base combination is read back from the shortcut catalog so the board
+      // never hard-codes a key the user may have re-recorded.
+      const boardBaseBinding = () => {
+        try {
+          return ctx.shortcuts.catalog.getSnapshot()
+            .find((row) => row.id === boardIds[0])?.binding ?? null;
+        } catch (error) {
+          console.error('kana-desktop-shortcuts: board binding read failed', error);
+          return null;
+        }
+      };
+      // While the board is open the window must stop treating keys as menu
+      // mnemonics. Otherwise Windows keeps the Alt release inside the menu bar,
+      // the document never sees it, and "release to commit" cannot be honoured.
+      // The switch is asynchronous, so a fast tap can outrun it; `active` only
+      // becomes true once the bridge confirms, and the tap path below covers the
+      // window where the release would still be swallowed.
+      const startBoardCapture = () => {
+        const service = ctx.shortcuts;
+        if (typeof service?.recording !== 'function') return;
+        board.capturePending = true;
+        Promise.resolve(service.recording(true)).then(() => {
+          // Closed while the request was in flight: stopBoardCapture has already
+          // queued the matching release, so nothing else to do here.
+          if (!board.capturePending) return;
+          board.capturePending = false;
+          board.captureActive = true;
+        }).catch((error) => {
+          board.capturePending = false;
+          console.error('kana-desktop-shortcuts: board keyboard capture failed', error);
+        });
+      };
+      const stopBoardCapture = () => {
+        if (!board.captureActive && !board.capturePending) return;
+        board.capturePending = false;
+        board.captureActive = false;
+        Promise.resolve(ctx.shortcuts?.recording?.(false)).catch((error) =>
+          console.error('kana-desktop-shortcuts: board keyboard release failed', error));
+      };
+      // With the capture held the native dispatcher stays silent, so the board
+      // moves itself: the recorded base key steps forward and Shift reverses it.
+      const boardMoves = (event) => {
+        if (!board.captureActive) return false;
+        const binding = boardBaseBinding();
+        if (!binding || binding.secondCode || event.code !== binding.code) return false;
+        const modifiers = binding.modifiers ?? [];
+        if (modifiers.length !== 1 || modifiers[0] !== 'alt') return false;
+        if (event.ctrlKey || event.metaKey || !event.altKey) return false;
+        event.preventDefault();
+        event.stopPropagation();
+        if (!event.repeat) moveBoard(event.shiftKey ? -1 : 1);
+        return true;
       };
       const boardKeyDown = (event) => {
         if (board.mode === null) return;
         if (event.isComposing || event.getModifierState?.('AltGraph')) return;
         const altKey = event.code === 'AltLeft' || event.code === 'AltRight';
+        if (boardMoves(event)) return;
         // Losing the modifier without the matching keyup means the release may
         // never arrive; cancelling is the only outcome that cannot misfire.
         if (board.mode === 'transient' && !altKey && !event.altKey) {
@@ -358,6 +432,18 @@ window.__ModuleLoader__.load({
       };
       const boardKeyUp = (event) => {
         if (board.mode !== 'transient') return;
+        // A fast tap (Alt+Q released at once) can outrun the asynchronous
+        // keyboard capture, and then the menu bar swallows the Alt release and
+        // the board would hang open. The base key's own release is the signal we
+        // do get in that window, so it commits exactly like Alt+Tab does.
+        if (!board.captureActive) {
+          const binding = boardBaseBinding();
+          if (binding !== null && !binding.secondCode && event.code === binding.code) {
+            event.preventDefault();
+            commitBoard();
+            return;
+          }
+        }
         if (event.code !== 'AltLeft' && event.code !== 'AltRight' && event.key !== 'Alt') return;
         commitBoard();
       };
@@ -375,7 +461,9 @@ window.__ModuleLoader__.load({
         };
       };
       const openBoard = (mode) => {
-        if (!switcherReady() || !pageReady() || !document.hasFocus()) return false;
+        if (!switcherReady() || !pageReady() || !document.hasFocus()) {
+          return false;
+        }
         if (board.mode !== null) return true;
         syncRecent();
         const ids = boardCandidates();
@@ -383,11 +471,22 @@ window.__ModuleLoader__.load({
           boardHint(t('boardNone'));
           return false;
         }
+        // The tap finished before this document heard about the press: the keys
+        // are already up, so switching now is the only honest reading of it.
+        // Opening a board here would leave nobody able to close it.
+        if (mode === 'transient' && tapAlreadyReleased()) {
+          const target = ids[1] ?? null;
+          if (target !== null && target !== currentSessionId() && !openVisibleSession(target)) {
+            boardHint(t('boardGone'));
+          }
+          return true;
+        }
         board.mode = mode;
         board.ids = ids;
         board.index = 1;
         board.previousFocus = document.activeElement ?? null;
         attachBoardInput();
+        startBoardCapture();
         publishBoard();
         return true;
       };
@@ -967,9 +1066,20 @@ window.__ModuleLoader__.load({
       function SessionBoard() {
         const state = React.useSyncExternalStore(boardSubscribe, boardSnapshot);
         const root = React.useRef(null);
+        const cardRefs = React.useRef([]);
         React.useEffect(() => {
           if (state.mode !== null) root.current?.focus?.();
         }, [state.mode]);
+        // Keep the highlighted card visible without ever asking for the mouse:
+        // rows scroll only once the panel has reached its maximum shape.
+        React.useEffect(() => {
+          if (state.mode === null) return;
+          cardRefs.current[state.index]?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
+        }, [state.mode, state.index]);
+        const count = Math.max(state.cards.length, 1);
+        const boardColumns = Math.min(count, boardMaxColumns);
+        const rows = Math.ceil(count / boardColumns);
+        const boardPanelHeight = (Math.min(rows, boardMaxRows) * (boardCardHeight + 12)) - 12 + 32;
         if (state.mode === null) {
           if (state.hint === '') return null;
           return React.createElement('div', {
@@ -989,15 +1099,26 @@ window.__ModuleLoader__.load({
         },
         React.createElement('div', {
           role: 'listbox', 'aria-label': t('boardTitle'),
-          style: { display: 'flex', alignItems: 'stretch', gap: 12, padding: '16px 20px',
-            maxWidth: 'calc(100% - 48px)', overflowX: 'auto', overflowY: 'hidden', borderRadius: 16,
+          // A rectangle that grows with the conversation count, like the Windows
+          // switcher: one row while it fits, extra rows after that. It never
+          // grows past its maximum shape; further cards scroll vertically, and
+          // the highlight is scrolled into view so the keyboard alone suffices.
+          style: { display: 'grid', gap: 12, padding: '16px 20px',
+            gridTemplateColumns: `repeat(${boardColumns}, 190px)`,
+            gridAutoRows: `${boardCardHeight}px`,
+            alignContent: 'start',
+            maxWidth: 'calc(100% - 48px)', maxHeight: boardPanelHeight,
+            overflowY: rows > boardMaxRows ? 'auto' : 'hidden', overflowX: 'hidden',
+            borderRadius: 16,
             background: colors.surface, border: `1px solid ${colors.border}`,
             boxShadow: '0 18px 48px rgb(0 0 0 / 0.35)' },
         }, state.cards.map((card, index) => React.createElement('div', {
           key: card.id, role: 'option', 'aria-selected': index === state.index,
           'aria-label': `${card.title} — ${card.workspace}`,
+          ref: (node) => { cardRefs.current[index] = node; },
           onClick: () => { board.index = index; commitBoard(); },
-          style: { display: 'flex', flexDirection: 'column', gap: 6, flex: '0 0 auto', width: 190,
+          style: { display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0,
+            height: boardCardHeight, boxSizing: 'border-box',
             padding: '12px 14px', borderRadius: 12, cursor: 'pointer',
             border: `2px solid ${index === state.index ? colors.accent : colors.border}`,
             background: 'var(--dsw-alias-bg-layer-1)' },
@@ -1025,6 +1146,28 @@ window.__ModuleLoader__.load({
         let disposeBoard;
         let disposeCommands;
         let registeredKind;
+        // Record the base press and both releases for the whole session: the board
+        // may be created after the tap already finished, and only the Alt release
+        // is still delivered to the page in that window.
+        const trackDown = (event) => {
+          const binding = boardBaseBinding();
+          if (binding === null || binding.secondCode || event.code !== binding.code) return;
+          // No modifier check here: the window menu swallows the Alt press, so
+          // this document sees the base key alone and reports `altKey: false`.
+          keyWatch.lastBaseDownAt = Date.now();
+        };
+        const trackUp = (event) => {
+          const binding = boardBaseBinding();
+          if (binding !== null && !binding.secondCode && event.code === binding.code) {
+            keyWatch.baseUpAt = Date.now();
+            return;
+          }
+          if (event.code === 'AltLeft' || event.code === 'AltRight') {
+            keyWatch.altUpAt = Date.now();
+          }
+        };
+        window.addEventListener('keydown', trackDown, true);
+        window.addEventListener('keyup', trackUp, true);
         const sync = () => {
           const active = pageReady();
           const kind = active ? (desktopReady() ? 'community-stable' : nextDeveloperReady() ? 'next' : 'official') : undefined;
@@ -1059,7 +1202,8 @@ window.__ModuleLoader__.load({
         observer.observe(document.documentElement, {
           attributes: true, attributeFilter: ['data-dsh-desktop-mode'], childList: true, subtree: true,
         });
-        return () => { observer.disconnect(); disposeCommands?.(); disposeSlot?.(); closeBoard(false); disposeBoard?.(); };
+        return () => { observer.disconnect(); disposeCommands?.(); disposeSlot?.(); closeBoard(false); disposeBoard?.();
+          window.removeEventListener('keydown', trackDown, true); window.removeEventListener('keyup', trackUp, true); };
       }, 'kana shortcuts: DSH settings and commands');
     },
   }),
