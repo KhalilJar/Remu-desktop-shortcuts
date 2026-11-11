@@ -127,11 +127,18 @@ window.__ModuleLoader__.load({
       const devtoolsReady = () => desktopReady() || nextDeveloperReady();
       const pageReady = () => officialReady() || desktopReady();
       const fixedPanelAvailable = () => desktopReady() && ctx.shortcuts.platform === 'windows';
-      // The board commits on the Alt keyup, which is only observable when the
-      // main document has focus. That combination is verified on DSH NEXT
-      // Windows only, so every other runtime keeps the old actions untouched.
-      const switcherReady = () => nextDeveloperReady() && ctx.shortcuts.runtime === 'desktop' &&
-        ctx.shortcuts.platform === 'windows';
+      // The board commits on the Alt keyup, which is only observable while the
+      // shell stops consuming that release itself: on Windows the window menu
+      // eats the Alt keyup. Both shells implement the same pair — the client's
+      // `shortcuts.recording` and the main process's `setIgnoreMenuShortcuts`
+      // — and both swallow the base keyup under the same `consumed === "press"`
+      // condition (verified against the community `lib/main.js`), so either
+      // shell can host the board. The community shell reports `runtime: "web"`
+      // because it renders in a web content view, which is why the runtime is
+      // no longer part of this gate. Plain Web has no such bridge and keeps the
+      // old actions untouched.
+      const switcherReady = () => (nextDeveloperReady() || desktopReady()) &&
+        ctx.shortcuts.platform === 'windows' && typeof ctx.shortcuts.recording === 'function';
 
       // DSH owns keyboard dispatch, conflict checks and storage. Keep original
       // action IDs so each runtime's saved preferences remain untouched.
@@ -233,10 +240,23 @@ window.__ModuleLoader__.load({
       // still reaches the page, so both are recorded for the whole session and the
       // board can tell that the tap already finished.
       const keyWatch = { baseUpAt: 0, altUpAt: 0, lastBaseDownAt: 0 };
+      // A "tap" is a press and release that finished before the command arrived.
+      // The two shells report differently: the community shell resolves the
+      // shortcut inside the renderer, so this document sees the whole gesture,
+      // while DSH NEXT resolves it in the main process, which calls
+      // `preventDefault()` on the matched keydown and then round-trips through
+      // IPC. There the base keydown never reaches the page, and the only trace
+      // of the finished tap is the Alt release. Keep the window tight for that
+      // blind path: the IPC round trip is milliseconds, so a release older than
+      // the window means Alt is still held and the board must really open.
       const tapAlreadyReleased = () => {
-        if (keyWatch.lastBaseDownAt === 0) return false;
         const upAt = Math.max(keyWatch.baseUpAt, keyWatch.altUpAt);
-        return upAt > 0 && upAt >= keyWatch.lastBaseDownAt && Date.now() - upAt <= 500;
+        if (upAt === 0) return false;
+        const known = keyWatch.lastBaseDownAt > 0;
+        const window = known ? 500 : 300;
+        if (Date.now() - upAt > window) return false;
+        if (!known) return keyWatch.altUpAt === upAt;
+        return upAt >= keyWatch.lastBaseDownAt;
       };
       const boardSubscribe = (listener) => {
         board.listeners.add(listener);
@@ -306,6 +326,11 @@ window.__ModuleLoader__.load({
       const closeBoard = (restoreFocus) => {
         if (board.mode === null) return;
         board.mode = null;
+        // The gesture that opened the board is over; the next open must not
+        // read this release again as a fresh tap.
+        keyWatch.baseUpAt = 0;
+        keyWatch.altUpAt = 0;
+        keyWatch.lastBaseDownAt = 0;
         board.ids = [];
         board.index = 0;
         if (board.detach) board.detach();
@@ -360,6 +385,9 @@ window.__ModuleLoader__.load({
       const startBoardCapture = () => {
         const service = ctx.shortcuts;
         if (typeof service?.recording !== 'function') return;
+        // A pre-armed capture already holds the keyboard; asking twice would
+        // queue a second release the close path never pairs.
+        if (board.captureActive || board.capturePending) return;
         board.capturePending = true;
         Promise.resolve(service.recording(true)).then(() => {
           // Closed while the request was in flight: stopBoardCapture has already
@@ -373,11 +401,50 @@ window.__ModuleLoader__.load({
         });
       };
       const stopBoardCapture = () => {
+        // Every gesture re-arms from scratch: leaving the flag set made the
+        // second Alt press skip the pre-arm and fall back to a menu that
+        // swallows the release again.
+        if (preArm.on) {
+          preArm.on = false;
+          if (preArm.timer !== 0 && typeof clearTimeout === 'function') clearTimeout(preArm.timer);
+          preArm.timer = 0;
+        }
         if (!board.captureActive && !board.capturePending) return;
         board.capturePending = false;
         board.captureActive = false;
         Promise.resolve(ctx.shortcuts?.recording?.(false)).catch((error) =>
           console.error('kana-desktop-shortcuts: board keyboard release failed', error));
+      };
+      // Holding Alt is the only moment the board needs the keyboard. On Windows
+      // the window takes that key for its menu before this document ever sees
+      // the Q that follows, and the switch that stops it (`setIgnoreMenuShortcuts`)
+      // is only reachable through `shortcuts.recording`. So the plugin takes the
+      // keyboard for as long as Alt stays down: the whole gesture then arrives
+      // here, and DSH's own dispatch is bypassed on purpose. Any other Alt
+      // binding is silenced for that hold — the price of Alt+Q working at all.
+      const preArm = { on: false, timer: 0 };
+      const preArmLimitMs = 2000;
+      const releasePreArm = () => {
+        if (preArm.timer !== 0) {
+          if (typeof clearTimeout === 'function') clearTimeout(preArm.timer);
+          preArm.timer = 0;
+        }
+        const was = preArm.on;
+        preArm.on = false;
+        if (!was) return;
+        // Once the board is open it owns the capture; only an Alt press that
+        // never became a board has to give the keyboard back here.
+        if (board.mode === null) stopBoardCapture();
+      };
+      const holdPreArm = (event) => {
+        // Only a bare Alt press starts a board gesture. When Ctrl or Meta is
+        // already down the user is reaching for a normal Ctrl+Alt shortcut
+        // (`Ctrl+Alt+D` and friends), which must keep flowing to DSH.
+        if (event?.ctrlKey || event?.metaKey) return;
+        if (preArm.on || board.mode !== null || !switcherReady()) return;
+        preArm.on = true;
+        startBoardCapture();
+        if (typeof setTimeout === 'function') preArm.timer = setTimeout(releasePreArm, preArmLimitMs);
       };
       // With the capture held the native dispatcher stays silent, so the board
       // moves itself: the recorded base key steps forward and Shift reverses it.
@@ -475,6 +542,10 @@ window.__ModuleLoader__.load({
         // are already up, so switching now is the only honest reading of it.
         // Opening a board here would leave nobody able to close it.
         if (mode === 'transient' && tapAlreadyReleased()) {
+          // Consume the gesture so a second open cannot replay this release.
+          keyWatch.baseUpAt = 0;
+          keyWatch.altUpAt = 0;
+          keyWatch.lastBaseDownAt = 0;
           const target = ids[1] ?? null;
           if (target !== null && target !== currentSessionId() && !openVisibleSession(target)) {
             boardHint(t('boardGone'));
@@ -1151,10 +1222,24 @@ window.__ModuleLoader__.load({
         // is still delivered to the page in that window.
         const trackDown = (event) => {
           const binding = boardBaseBinding();
-          if (binding === null || binding.secondCode || event.code !== binding.code) return;
-          // No modifier check here: the window menu swallows the Alt press, so
-          // this document sees the base key alone and reports `altKey: false`.
+          if (event.code === 'AltLeft' || event.code === 'AltRight') {
+            if (!event.repeat) holdPreArm(event);
+            return;
+          }
+          if (binding === null || binding.secondCode || event.code !== binding.code) {
+            // Any other key ends the hold: shortening the silenced window keeps
+            // an unrelated Alt combination from being swallowed whole.
+            if (preArm.on) releasePreArm();
+            return;
+          }
           keyWatch.lastBaseDownAt = Date.now();
+          // While the pre-arm holds the keyboard DSH dispatch stays silent, so
+          // the board has to be opened from this document instead.
+          if (preArm.on && board.mode === null && event.altKey) {
+            if (openBoard(event.ctrlKey ? 'pinned' : 'transient') && event.shiftKey && board.mode === 'transient') {
+              moveBoard(-1);
+            }
+          }
         };
         const trackUp = (event) => {
           const binding = boardBaseBinding();
@@ -1164,6 +1249,9 @@ window.__ModuleLoader__.load({
           }
           if (event.code === 'AltLeft' || event.code === 'AltRight') {
             keyWatch.altUpAt = Date.now();
+            // Only Alt was tapped: give the keyboard back at once, so no other
+            // Alt binding stays silenced behind the timeout.
+            if (board.mode === null) releasePreArm();
           }
         };
         window.addEventListener('keydown', trackDown, true);

@@ -200,9 +200,9 @@ function descendants(node) {
   return [node, ...node.children.flatMap(descendants)];
 }
 
-test('registers fifteen unbound Desktop actions and one dedicated settings page', async () => {
+test('registers eighteen unbound Desktop actions and one dedicated settings page', async () => {
   const { commands, slots, actions, disposed } = load();
-  assert.equal(commands.length, 15);
+  assert.equal(commands.length, 18);
   for (const command of commands) {
     assert.deepEqual(Object.keys(command.defaults), []);
     // Official Desktop validates every dot-separated segment at its IPC boundary.
@@ -225,16 +225,16 @@ test('registers after Desktop mode arrives and keeps all three Desktop modes act
   assert.equal(commands.length, 0);
   document.body.dataset.dshDesktopMode = 'advanced';
   observers[0].callback();
-  assert.equal(slots.length, 1);
-  assert.equal(commands.length, 15);
+  assert.equal(slots.length, 2);
+  assert.equal(commands.length, 18);
   document.body.dataset.dshDesktopMode = 'compatibility';
   observers[0].callback();
-  assert.equal(slots.length, 1);
-  assert.equal(commands.length, 15);
+  assert.equal(slots.length, 2);
+  assert.equal(commands.length, 18);
   document.body.dataset.dshDesktopMode = 'extended';
   observers[0].callback();
-  assert.equal(slots.length, 1);
-  assert.equal(commands.length, 15);
+  assert.equal(slots.length, 2);
+  assert.equal(commands.length, 18);
   document.body.dataset.dshDesktopMode = 'unrecognized';
   observers[0].callback();
   assert.equal(slots.length, 0);
@@ -245,8 +245,8 @@ test('registers after Desktop mode arrives and keeps all three Desktop modes act
 
 test('compatibility mode without a body marker uses trusted preload plus URL mode', () => {
   const compatible = load({ mode: null, urlMode: 'compatibility', runtime: 'web' });
-  assert.equal(compatible.slots.length, 1);
-  assert.equal(compatible.commands.length, 15);
+  assert.equal(compatible.slots.length, 2);
+  assert.equal(compatible.commands.length, 18);
   compatible.commands[1].resolve({ modal: null }).run();
   assert.deepEqual(compatible.actions, [null]);
   for (const off of compatible.disposed.reverse()) off();
@@ -335,7 +335,7 @@ test('mode arriving late does not discard existing action identities', () => {
   assert.equal(commands.length, 0);
   document.body.dataset.dshDesktopMode = 'compatibility';
   observers[0].callback();
-  assert.equal(commands.length, 15);
+  assert.equal(commands.length, 18);
   assert.deepEqual(Array.from(commands.slice(0, 6), (command) => command.id), [
     'kana.shortcuts.devtools', 'kana.shortcuts.conversation', 'kana.shortcuts.focus-composer',
     'kana.shortcuts.focus-content', 'kana.shortcuts.recent-session', 'kana.shortcuts.previous-session',
@@ -588,11 +588,22 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 const cardsOf = (node) => descendants(node).filter((child) => child.props?.role === 'option');
 
-test('session board exists only on NEXT Windows and commits exactly once on the Alt release', () => {
-  const plain = load();
-  assert.equal(plain.commands.some((command) => command.id === 'kana.shortcuts.session-board'), false);
-  assert.equal(overlaySlot(plain), undefined);
-  for (const off of plain.disposed.reverse()) off();
+test('session board is offered on the community and NEXT Windows shells, never on plain Web', () => {
+  const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
+  assert.equal(web.commands.some((command) => command.id === 'kana.shortcuts.session-board'), false);
+  assert.equal(overlaySlot(web), undefined);
+  for (const off of web.disposed.reverse()) off();
+
+  // The community shell reports runtime "web" but runs the same main-process
+  // capture as NEXT (recording + setIgnoreMenuShortcuts), so it hosts the board.
+  const community = load({ bridge: true, mode: 'advanced', runtime: 'web' });
+  assert.equal(community.commands.some((command) => command.id === 'kana.shortcuts.session-board'), true);
+  visitBoard(community, ['s2', 's1']);
+  const communityOpen = boardCommand(community);
+  assert.equal(communityOpen.resolve({ modal: null }).status, 'handled');
+  communityOpen.resolve({ modal: null }).run();
+  assert.equal(boardNode(community).props['data-kana-session-board'], 'transient');
+  for (const off of community.disposed.reverse()) off();
 
   const environment = load(nextWindows);
   visitBoard(environment, ['s2', 's1']);
@@ -698,6 +709,25 @@ test('a tap whose release arrives before the board opens still switches', () => 
   // No board is opened - nobody could close it - the switch happens directly.
   assert.equal(boardOpen(environment), false);
   assert.deepEqual(environment.actions, ['open:s3']);
+  for (const off of environment.disposed.reverse()) off();
+});
+
+test('the main-process shell, which hides the base keydown, still reads a finished tap', () => {
+  const environment = load(nextWindows);
+  environment.catalog.push({ id: 'kana.shortcuts.session-board', binding: { code: 'KeyQ', modifiers: ['alt'] } });
+  visitBoard(environment, ['s2', 's3', 's1']);
+  environment.actions.length = 0;
+  // DSH NEXT resolves the shortcut in the main process, which preventDefaults
+  // the matched keydown: this document never sees the press. Only the Alt
+  // release reaches the page, and the command lands milliseconds later.
+  fireWindow(environment, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
+  boardCommand(environment).resolve({ modal: null }).run();
+  assert.equal(boardOpen(environment), false);
+  assert.deepEqual(environment.actions, ['open:s3']);
+  // The gesture is consumed, so a deliberate second press opens the board.
+  environment.actions.length = 0;
+  boardCommand(environment).resolve({ modal: null }).run();
+  assert.equal(boardOpen(environment), true);
   for (const off of environment.disposed.reverse()) off();
 });
 
@@ -873,10 +903,16 @@ test('board binding save writes nothing when a derived combination is taken', as
 });
 
 test('board settings stay out of the ordinary action list', () => {
-  const desktop = load();
-  assert.equal(descendants(desktop.slots[0].component())
-    .some((node) => node.props?.['data-kana-board-settings'] !== undefined), false);
-  for (const off of desktop.disposed.reverse()) off();
+  const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
+  // Plain Web never reaches the plugin at all, so there is no settings section.
+  assert.equal(web.slots.length, 0);
+  for (const off of web.disposed.reverse()) off();
+
+  // Community Desktop hosts the board too, so it shows the board settings.
+  const community = load({ bridge: true, mode: 'advanced', runtime: 'web' });
+  assert.equal(descendants(community.slots[0].component())
+    .some((node) => node.props?.['data-kana-board-settings'] !== undefined), true);
+  for (const off of community.disposed.reverse()) off();
 
   const environment = load(nextWindows);
   const settings = environment.slots[0].component();
