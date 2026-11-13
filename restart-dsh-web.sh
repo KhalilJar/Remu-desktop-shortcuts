@@ -4,13 +4,21 @@
 # the new one in its own session, so it survives the caller going away.
 set -euo pipefail
 
-PATTERN='dsh web --host 127.0.0.1 --port 3080'
+PATTERN='dsh web'
+PORT='3080'
+
+# The server's /proc/<pid>/comm reads "MainThread" (Node names its main thread),
+# so the process has to be identified by the argv it was started with.
 find_pid() {
-  local pid
+  local pid cmd
   for pid in $(pgrep -f "$PATTERN" || true); do
-    [ "$(cat "/proc/${pid}/comm" 2>/dev/null)" = "node" ] || continue
-    echo "$pid"
-    return 0
+    [ "$pid" = "$$" ] && continue
+    [ -r "/proc/${pid}/cmdline" ] || continue
+    cmd=$(tr '\0' ' ' < "/proc/${pid}/cmdline" || true)
+    case "$cmd" in
+      *restart-dsh-web*) continue ;;
+      *"dsh web --host"*"--port ${PORT}"*) echo "$pid"; return 0 ;;
+    esac
   done
   return 1
 }
@@ -25,6 +33,8 @@ CMD=$(tr '\0' ' ' < "/proc/${OLD}/cmdline")
 echo "old pid: ${OLD}"
 echo "argv:    ${CMD}"
 
+WORKDIR=$(readlink "/proc/${OLD}/cwd" 2>/dev/null || echo "$HOME")
+
 kill "${OLD}"
 for _ in $(seq 1 60); do
   kill -0 "${OLD}" 2>/dev/null || break
@@ -35,6 +45,7 @@ if kill -0 "${OLD}" 2>/dev/null; then
   exit 1
 fi
 
+cd "${WORKDIR}" || cd "$HOME"
 # shellcheck disable=SC2086
 setsid nohup ${CMD} >>/tmp/dsh-web-restart.log 2>&1 < /dev/null &
 sleep 3
@@ -48,8 +59,8 @@ fi
 
 echo "new pid: ${NEW}"
 for _ in $(seq 1 40); do
-  if curl -s -o /dev/null -m 2 http://127.0.0.1:3080/; then
-    echo "dsh web answers on 127.0.0.1:3080"
+  if curl -s -o /dev/null -m 2 "http://127.0.0.1:${PORT}/"; then
+    echo "dsh web answers on 127.0.0.1:${PORT}"
     exit 0
   fi
   sleep 0.5
