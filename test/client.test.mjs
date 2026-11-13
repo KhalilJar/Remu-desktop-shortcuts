@@ -251,8 +251,11 @@ test('compatibility mode without a body marker uses trusted preload plus URL mod
   assert.deepEqual(compatible.actions, [null]);
   for (const off of compatible.disposed.reverse()) off();
   const browserImpersonator = load({ mode: null, urlMode: 'compatibility', bridge: false, runtime: 'web' });
-  assert.equal(browserImpersonator.slots.length, 0);
-  assert.equal(browserImpersonator.commands.length, 0);
+  // No preload bridge: the URL marker cannot claim Desktop mode, so this is
+  // treated as plain Web — served, but without any Desktop capability.
+  assert.equal(browserImpersonator.commands.some((command) =>
+    command.id === 'kana.shortcuts.devtools'), false);
+  assert.equal(browserImpersonator.commands.length, 17);
   for (const off of browserImpersonator.disposed.reverse()) off();
 });
 
@@ -273,7 +276,7 @@ test('dedicated page clears and resets only its own action through revision-awar
   ]);
 });
 
-test('official Desktop registers native-compatible actions, while plain Web stays inactive', () => {
+test('official Desktop registers native-compatible actions, while plain Web registers the shell-free ones', () => {
   const official = load({ mode: null, bridge: false, official: true, runtime: 'desktop' });
   assert.equal(official.commands.length, 14);
   assert.equal(official.commands.some((command) => command.id === 'kana.shortcuts.devtools'), false);
@@ -282,8 +285,10 @@ test('official Desktop registers native-compatible actions, while plain Web stay
   assert.deepEqual(official.actions, [null]);
   for (const platform of ['windows', 'macos', 'linux']) {
     const browser = load({ mode: null, bridge: false, official: false, runtime: 'web', platform });
-    assert.equal(browser.commands.length, 0);
-    assert.equal(browser.slots.length, 0);
+    assert.equal(browser.slots[0].options.id, 'kana-desktop-shortcuts');
+    // 18 actions minus DevTools, which needs a shell to open a real devtools.
+    assert.equal(browser.commands.length, platform === 'windows' ? 17 : 14);
+    assert.equal(browser.commands.some((command) => command.id === 'kana.shortcuts.devtools'), false);
     for (const off of browser.disposed.reverse()) off();
   }
   for (const off of official.disposed.reverse()) off();
@@ -302,8 +307,10 @@ test('DSH NEXT reuses the original DevTools ID through its guarded native comman
   for (const off of next.disposed.reverse()) off();
 
   const browser = load({ mode: null, bridge: false, next: true, runtime: 'web' });
-  assert.equal(browser.commands.length, 0);
-  assert.equal(browser.slots.length, 0);
+  // NEXT's native DevTools command needs the shell, so a plain browser keeps
+  // the other actions and never gains that row.
+  assert.equal(browser.commands.some((command) => command.id === 'kana.shortcuts.devtools'), false);
+  assert.equal(browser.commands.length, 17);
   for (const off of browser.disposed.reverse()) off();
 });
 
@@ -539,8 +546,9 @@ test('panel order follows live slots and fixed conflicts are not consumed', () =
 });
 
 test('never invokes in an unknown mode, in a modal, or while unfocused', () => {
-  for (const config of [{ mode: 'unknown' }, { mode: 'compatibility', bridge: false },
-    { mode: null, bridge: true }, { mode: null, bridge: false }]) {
+  // A Desktop shell whose mode is unrecognised stays inactive; a plain browser
+  // is not a Desktop shell in an unknown mode, so it is handled separately.
+  for (const config of [{ mode: 'unknown' }, { mode: null, bridge: true }]) {
     const unsupported = load(config);
     assert.equal(unsupported.commands.length, 0);
     assert.equal(unsupported.slots.length, 0);
@@ -588,11 +596,36 @@ const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 const cardsOf = (node) => descendants(node).filter((child) => child.props?.role === 'option');
 
-test('session board is offered on the community and NEXT Windows shells, never on plain Web', () => {
+test('session board is offered on the community and NEXT Windows shells and on plain Web Windows', () => {
+  // Plain Web has no window menu to swallow the Alt release, so the board needs
+  // no capture there; it is offered whenever the platform reports Windows.
   const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
-  assert.equal(web.commands.some((command) => command.id === 'kana.shortcuts.session-board'), false);
-  assert.equal(overlaySlot(web), undefined);
+  assert.equal(web.commands.some((command) => command.id === 'kana.shortcuts.session-board'), true);
+  web.catalog.push({ id: 'kana.shortcuts.session-board',
+    binding: { code: 'KeyQ', modifiers: ['alt'] } });
+  visitBoard(web, ['s2', 's1']);
+  web.actions.length = 0;
+  assert.equal(web.captureCalls.length, 0);
+  // The gesture is read from this document: DSH's Web runtime never dispatches
+  // an Alt-only binding, and a browser has nothing to capture it away from.
+  fireWindow(web, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
+  fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+  assert.equal(boardNode(web).props['data-kana-session-board'], 'transient');
+  // The same press may still reach the command, which must not step twice.
+  const duplicate = boardCommand(web).resolve({ modal: null });
+  assert.equal(duplicate.status, 'handled');
+  duplicate.run();
+  // Releasing the base key is "move", not "commit", while Alt is still held.
+  fireWindow(web, 'keyup', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+  assert.deepEqual(web.actions, []);
+  fireWindow(web, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
+  assert.deepEqual(web.actions, ['open:s2']);
   for (const off of web.disposed.reverse()) off();
+
+  // A browser on another platform cannot promise an observable Alt release.
+  const notWindows = load({ mode: null, bridge: false, official: false, runtime: 'web', platform: 'linux' });
+  assert.equal(notWindows.commands.some((command) => command.id === 'kana.shortcuts.session-board'), false);
+  for (const off of notWindows.disposed.reverse()) off();
 
   // The community shell reports runtime "web" but runs the same main-process
   // capture as NEXT (recording + setIgnoreMenuShortcuts), so it hosts the board.
@@ -903,9 +936,11 @@ test('board binding save writes nothing when a derived combination is taken', as
 });
 
 test('board settings stay out of the ordinary action list', () => {
+  // Plain Web hosts the board too, so its settings page carries the Alt-only
+  // recorder as well.
   const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
-  // Plain Web never reaches the plugin at all, so there is no settings section.
-  assert.equal(web.slots.length, 0);
+  assert.equal(descendants(web.slots[0].component())
+    .some((node) => node.props?.['data-kana-board-settings'] !== undefined), true);
   for (const off of web.disposed.reverse()) off();
 
   // Community Desktop hosts the board too, so it shows the board settings.

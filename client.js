@@ -41,6 +41,7 @@ window.__ModuleLoader__.load({
           board: '会话轮切板', boardBack: '会话轮切板（反向）', boardPin: '会话轮切板（固定模式）',
           boardSection: '会话轮切板（DSH NEXT / Windows）',
           boardHelp: '录一次 Alt + 普通键（例如 Alt+Q）。插件据此派生 Shift+Alt+Q 反向移动与 Ctrl+Alt+Q 固定模式；三者任一被占用就不保存，原键位保持不变。按住 Alt 连按基础键移动高亮，松开 Alt 才切换；Esc 取消。',
+          boardHelpWeb: '在浏览器里录一次 Alt + 普通键（例如 Alt+Q）。浏览器版没有窗口菜单抢 Alt，松开即可切换；但 Firefox 会把单独的 Alt 交给菜单，建议用 Chrome 或 Edge。',
           boardRecord: '＋ 录制轮切键',
           boardRecording: '请按住 Alt 再按一个普通键（如 Alt+Q）；再点按钮或 Esc 取消',
           boardInvalid: '轮切键必须只带 Alt：请按住 Alt，再按一个普通键。',
@@ -79,6 +80,7 @@ window.__ModuleLoader__.load({
           board: 'Session board', boardBack: 'Session board (backwards)', boardPin: 'Session board (pinned)',
           boardSection: 'Session board (DSH NEXT / Windows)',
           boardHelp: 'Record Alt + an ordinary key once (for example Alt+Q). Shift+Alt+Q moves backwards and Ctrl+Alt+Q pins the board; if any of the three is taken, nothing is saved. Hold Alt and tap the base key to move, release Alt to switch; Esc cancels.',
+          boardHelpWeb: 'Record Alt + an ordinary key in the browser (for example Alt+Q). There is no window menu to steal the Alt release, so releasing switches; Firefox hands a bare Alt to its menu, so Chrome or Edge is recommended.',
           boardRecord: '＋ Record board key',
           boardRecording: 'Hold Alt and press an ordinary key (for example Alt+Q); click again or Esc to cancel',
           boardInvalid: 'The board key must use Alt only: hold Alt and press an ordinary key.',
@@ -125,7 +127,16 @@ window.__ModuleLoader__.load({
       const desktopReady = () => bridgeReady() && desktopModes.includes(desktopMode());
       const nextDeveloperReady = () => officialReady() && typeof globalThis.desktopNext?.command === 'function';
       const devtoolsReady = () => desktopReady() || nextDeveloperReady();
-      const pageReady = () => officialReady() || desktopReady();
+      // Plain DSH Web (a browser pointed at a server) has no preload bridge, so
+      // every desktop-only helper above stays false. The shortcuts service
+      // still dispatches keys there, and the session/composer actions are pure
+      // client state, so those work unchanged — only the capabilities that need
+      // the shell (DevTools, fixed panel digits, menu-shortcut capture) stay off.
+      // Deliberately keyed on the missing bridge rather than on an unrecognised
+      // Desktop mode: a Desktop shell in an unknown mode must stay inactive
+      // instead of quietly degrading to Web behaviour.
+      const webReady = () => !officialReady() && !bridgeReady() && typeof window !== 'undefined';
+      const pageReady = () => officialReady() || desktopReady() || webReady();
       const fixedPanelAvailable = () => desktopReady() && ctx.shortcuts.platform === 'windows';
       // The board commits on the Alt keyup, which is only observable while the
       // shell stops consuming that release itself: on Windows the window menu
@@ -137,8 +148,14 @@ window.__ModuleLoader__.load({
       // because it renders in a web content view, which is why the runtime is
       // no longer part of this gate. Plain Web has no such bridge and keeps the
       // old actions untouched.
-      const switcherReady = () => (nextDeveloperReady() || desktopReady()) &&
-        ctx.shortcuts.platform === 'windows' && typeof ctx.shortcuts.recording === 'function';
+      // The shell gate above applies to Electron content views, where the window
+      // menu eats the Alt release unless `setIgnoreMenuShortcuts` takes over. A
+      // plain browser has no such menu: the release reaches the document by
+      // itself, so Web needs the board even though `recording` is absent.
+      const switcherReady = () => (
+        (nextDeveloperReady() || desktopReady()) &&
+          ctx.shortcuts.platform === 'windows' && typeof ctx.shortcuts.recording === 'function'
+      ) || (webReady() && ctx.shortcuts.platform === 'windows');
 
       // DSH owns keyboard dispatch, conflict checks and storage. Keep original
       // action IDs so each runtime's saved preferences remain untouched.
@@ -365,6 +382,18 @@ window.__ModuleLoader__.load({
         board.index = Math.min(Math.max(index, 0), ids.length - 1);
         publishBoard();
       };
+      // Shell-only: asks the window to stop interpreting keys as menu mnemonics
+      // while a recorder or the board owns the keyboard. Plain Web has no such
+      // channel, and does not need one.
+      const captureKeyboard = () => {
+        const service = ctx.shortcuts;
+        return typeof service?.recording === 'function' ? service.recording(true) : undefined;
+      };
+      const releaseKeyboard = () => {
+        const service = ctx.shortcuts;
+        if (typeof service?.recording !== 'function') return;
+        void Promise.resolve(service.recording(false)).catch(() => {});
+      };
       // The base combination is read back from the shortcut catalog so the board
       // never hard-codes a key the user may have re-recorded.
       const boardBaseBinding = () => {
@@ -441,6 +470,11 @@ window.__ModuleLoader__.load({
         // already down the user is reaching for a normal Ctrl+Alt shortcut
         // (`Ctrl+Alt+D` and friends), which must keep flowing to DSH.
         if (event?.ctrlKey || event?.metaKey) return;
+        // The pre-arm exists only to defeat the Electron window menu. A browser
+        // has no such menu and keeps dispatching, so pre-arming there would run
+        // the gesture twice — open via this path and then step again through the
+        // ordinary dispatch.
+        if (typeof ctx.shortcuts?.recording !== 'function') return;
         if (preArm.on || board.mode !== null || !switcherReady()) return;
         preArm.on = true;
         startBoardCapture();
@@ -502,8 +536,10 @@ window.__ModuleLoader__.load({
         // A fast tap (Alt+Q released at once) can outrun the asynchronous
         // keyboard capture, and then the menu bar swallows the Alt release and
         // the board would hang open. The base key's own release is the signal we
-        // do get in that window, so it commits exactly like Alt+Tab does.
-        if (!board.captureActive) {
+        // do get in that window, so it commits exactly like Alt+Tab does. Only
+        // the shell path needs this fallback: a browser never captures, so its
+        // base keyup means "move again", not "commit".
+        if (!board.captureActive && !webReady()) {
           const binding = boardBaseBinding();
           if (binding !== null && !binding.secondCode && event.code === binding.code) {
             event.preventDefault();
@@ -649,6 +685,10 @@ window.__ModuleLoader__.load({
         // the three rows stay out of the ordinary shortcut list (`board: true`).
         { id: boardIds[0], key: 'board', board: true, regions: ['page', 'editable', 'terminal'],
           resolve: (context) => {
+            // On Web this document already opened or stepped the board from its
+            // own keydown listener; letting the dispatch run as well would move
+            // the highlight twice for one press.
+            if (webReady()) return { status: 'handled', run: () => {} };
             if (!switcherReady() || !pageReady() || !document.hasFocus() || context?.modal !== null) {
               return { status: 'blocked', reason: 'board-unavailable' };
             }
@@ -665,12 +705,14 @@ window.__ModuleLoader__.load({
           } },
         { id: boardIds[1], key: 'boardBack', board: true, regions: ['page', 'editable', 'terminal'],
           resolve: (context) => {
+            if (webReady()) return { status: 'handled', run: () => {} };
             if (!switcherReady() || !pageReady() || !document.hasFocus() || context?.modal !== null ||
                 board.mode === null) return { status: 'blocked', reason: 'board-closed' };
             return { status: 'handled', run: () => moveBoard(-1) };
           } },
         { id: boardIds[2], key: 'boardPin', board: true, regions: ['page', 'editable', 'terminal'],
           resolve: (context) => {
+            if (webReady()) return { status: 'handled', run: () => {} };
             if (!switcherReady() || !pageReady() || !document.hasFocus() || context?.modal !== null) {
               return { status: 'blocked', reason: 'board-unavailable' };
             }
@@ -861,7 +903,13 @@ window.__ModuleLoader__.load({
               if (target.binding === null) continue;
               const description = ctx.shortcuts.describeBinding(target.binding);
               const conflicts = description.conflicts.filter((id) => !boardIds.includes(id));
-              if (description.issue !== null || conflicts.length > 0) {
+              // DSH refuses Alt-only combinations on its Web runtime because a
+              // browser may keep them to itself. That guard is right for
+              // arbitrary bindings, but the board's Alt rows are the whole point
+              // of this plugin and a browser (unlike the Electron window menu)
+              // does deliver a bare Alt release. Keep every other issue enforced.
+              const tolerated = webReady() && description.issue === 'unsupported-browser';
+              if ((description.issue !== null && !tolerated) || conflicts.length > 0) {
                 setBoardMessage(description.issue !== null ? t('invalidBinding')
                   : t('conflict', { commands: conflicts.map(labelFor).join(', ') }));
                 return;
@@ -959,8 +1007,8 @@ window.__ModuleLoader__.load({
               setMessage(t('invalidBinding'));
             }
           };
-          Promise.resolve(ctx.shortcuts.recording(true)).then(() => {
-            if (disposed) { void ctx.shortcuts.recording(false).catch(() => {}); return; }
+          Promise.resolve(captureKeyboard()).then(() => {
+            if (disposed) { void releaseKeyboard(); return; }
             document.addEventListener('keydown', down, true);
             document.addEventListener('keyup', up, true);
             setRecordReady(true);
@@ -975,7 +1023,7 @@ window.__ModuleLoader__.load({
             disposed = true;
             document.removeEventListener('keydown', down, true);
             document.removeEventListener('keyup', up, true);
-            void ctx.shortcuts.recording(false).catch(() => {});
+            void releaseKeyboard();
           };
         }, [recordingId]);
         React.useEffect(() => {
@@ -1020,8 +1068,8 @@ window.__ModuleLoader__.load({
             setBoardRecording(false);
             void saveBoardBinding(candidate);
           };
-          Promise.resolve(ctx.shortcuts.recording(true)).then(() => {
-            if (disposed) { void ctx.shortcuts.recording(false).catch(() => {}); return; }
+          Promise.resolve(captureKeyboard()).then(() => {
+            if (disposed) { void releaseKeyboard(); return; }
             document.addEventListener('keydown', down, true);
             document.addEventListener('keyup', up, true);
             setBoardRecordReady(true);
@@ -1035,7 +1083,7 @@ window.__ModuleLoader__.load({
             disposed = true;
             document.removeEventListener('keydown', down, true);
             document.removeEventListener('keyup', up, true);
-            void ctx.shortcuts.recording(false).catch(() => {});
+            void releaseKeyboard();
           };
         }, [boardRecording]);
         React.useEffect(() => {
@@ -1105,7 +1153,8 @@ window.__ModuleLoader__.load({
               fixedPanelAvailable() && occupied('Digit9') ? ` (${t('panelTaken')})` : '')),
         switcherReady() && React.createElement('div', { 'data-kana-board-settings': '' },
           React.createElement('h3', { style: { margin: '24px 0 8px', fontSize: 16 } }, t('boardSection')),
-          React.createElement('p', { style: { color: colors.secondary, fontSize: 13 } }, t('boardHelp')),
+          React.createElement('p', { style: { color: colors.secondary, fontSize: 13 } },
+            t(webReady() ? 'boardHelpWeb' : 'boardHelp')),
           React.createElement('div', { style: { display: 'flex', alignItems: 'center', flexWrap: 'wrap',
             gap: 12, padding: '14px 0', borderTop: `1px solid ${colors.border}` } },
           React.createElement('span', { style: { minWidth: 150 } }, t('board')),
@@ -1238,6 +1287,21 @@ window.__ModuleLoader__.load({
           if (preArm.on && board.mode === null && event.altKey) {
             if (openBoard(event.ctrlKey ? 'pinned' : 'transient') && event.shiftKey && board.mode === 'transient') {
               moveBoard(-1);
+            }
+            return;
+          }
+          // A browser has no pre-arm and no menu to fight, but DSH's Web runtime
+          // refuses Alt-only bindings on its own save path, so the gesture may
+          // never be dispatched. Drive the board from this document as well: it
+          // is the same keys the user recorded, only read one layer earlier.
+          if (webReady() && switcherReady()) {
+            if (event.altKey && event.ctrlKey) {
+              // Ctrl+Alt+base is the pinned variant: it never commits on release.
+              if (board.mode === null) openBoard('pinned');
+              else if (board.mode === 'transient') { board.mode = 'pinned'; publishBoard(); }
+            } else if (event.altKey) {
+              if (board.mode === null) openBoard('transient');
+              else moveBoard(event.shiftKey ? -1 : 1);
             }
           }
         };

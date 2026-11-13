@@ -1,10 +1,10 @@
 {
   "name": "kana-desktop-shortcuts",
-  "version": "0.4.8",
+  "version": "0.4.9",
   "private": true,
   "license": "MIT",
   "type": "module",
-  "description": "Configurable shortcuts for DSH Desktop, including an Alt+Tab style session switcher",
+  "description": "Keyboard shortcuts for DSH Desktop and DSH Web, including an Alt+Tab style session switcher",
   "exports": {
     ".": "./host.js",
     "./client": "./client.js",
