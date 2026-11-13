@@ -42,7 +42,7 @@ window.__ModuleLoader__.load({
           board: '会话轮切板', boardBack: '会话轮切板（反向）', boardPin: '会话轮切板（固定模式）',
           boardSection: '会话轮切板（DSH NEXT / Windows / 浏览器）',
           boardHelp: '录一次 Alt + 普通键（例如 Alt+Q）。插件据此派生 Shift+Alt+Q 反向移动与 Ctrl+Alt+Q 固定模式；三者任一被占用就不保存，原键位保持不变。按住 Alt 连按基础键移动高亮，松开 Alt 才切换；Esc 取消。',
-          boardHelpWeb: '浏览器里默认直接按 Alt+Q 就能开板，不必先录制。想换字母时录一次 Alt + 普通键：DSH 的 Web 运行时只肯保存 Ctrl+Alt 那一条，插件会从它推导出纯 Alt 手势；Firefox 会把单独的 Alt 交给菜单，建议用 Chrome 或 Edge。',
+          boardHelpWeb: '浏览器里默认直接按 Alt+Q 就能开板，不必先录制。想换字母时录一次 Alt + 普通键：DSH 的 Web 运行时只肯保存 Ctrl+Alt 那一条，插件会从它推导出纯 Alt 手势。按住 Alt 连按 Q 会一直往前走，松开 Alt 才真正切换；Firefox 会把单独的 Alt 交给菜单，建议用 Chrome 或 Edge。',
           boardRecord: '＋ 录制轮切键',
           boardRecording: '请按住 Alt 再按一个普通键（如 Alt+Q）；再点按钮或 Esc 取消',
           boardInvalid: '轮切键必须只带 Alt：请按住 Alt，再按一个普通键。',
@@ -82,7 +82,7 @@ window.__ModuleLoader__.load({
           board: 'Session board', boardBack: 'Session board (backwards)', boardPin: 'Session board (pinned)',
           boardSection: 'Session board (DSH NEXT / Windows / browser)',
           boardHelp: 'Record Alt + an ordinary key once (for example Alt+Q). Shift+Alt+Q moves backwards and Ctrl+Alt+Q pins the board; if any of the three is taken, nothing is saved. Hold Alt and tap the base key to move, release Alt to switch; Esc cancels.',
-          boardHelpWeb: 'In a browser Alt+Q works out of the box; you do not have to record it. To pick another letter, record Alt + an ordinary key once: the Web runtime only accepts the Ctrl+Alt variant, and the plugin derives the bare Alt gesture from it. Firefox hands a bare Alt to its menu, so Chrome or Edge is recommended.',
+          boardHelpWeb: 'In a browser Alt+Q works out of the box; you do not have to record it. To pick another letter, record Alt + an ordinary key once: the Web runtime only accepts the Ctrl+Alt variant, and the plugin derives the bare Alt gesture from it. Tapping Q again while Alt is held keeps stepping, and the switch happens when Alt is released. Firefox hands a bare Alt to its menu, so Chrome or Edge is recommended.',
           boardRecord: '＋ Record board key',
           boardRecording: 'Hold Alt and press an ordinary key (for example Alt+Q); click again or Esc to cancel',
           boardInvalid: 'The board key must use Alt only: hold Alt and press an ordinary key.',
@@ -521,6 +521,9 @@ window.__ModuleLoader__.load({
       // moves itself: the recorded base key steps forward and Shift reverses it.
       const boardMoves = (event) => {
         if (!board.captureActive) return false;
+        // On Web the document listener already reads the gesture, so stepping
+        // here as well would move two cards per tap.
+        if (webReady()) return false;
         const binding = boardBaseBinding();
         if (!binding || binding.secondCode || event.code !== binding.code) return false;
         const modifiers = binding.modifiers ?? [];
@@ -591,8 +594,12 @@ window.__ModuleLoader__.load({
         if (webReady()) {
           const binding = boardBaseBinding();
           if (binding !== null && !binding.secondCode && event.code === binding.code) {
-            // The release is the only signal a browser is sure to give us: give
-            // the Alt release a moment to arrive, then commit anyway.
+            // Alt still held means this is the end of one tap, not the end of the
+            // gesture: tapping Q again moves on. The modifier release commits
+            // below. Only when the release arrives with the modifier already
+            // gone (the browser cleared altKey on the press, so no Alt keyup is
+            // coming) does the base key's own release have to commit.
+            if (event.altKey || event.ctrlKey || event.metaKey) return;
             if (webCommitTimer === 0 && typeof setTimeout === 'function') {
               webCommitTimer = setTimeout(() => {
                 webCommitTimer = 0;

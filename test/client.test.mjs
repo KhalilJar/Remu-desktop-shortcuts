@@ -678,21 +678,42 @@ test('a browser whose menu clears altKey still reads the gesture, and commits wi
   assert.deepEqual(web.actions, ['open:s2']);
   for (const off of web.disposed.reverse()) off();
 
-  // When the release never arrives at all, the base keyup commits a moment
-  // later instead of leaving the board hanging.
-  const lost = load({ mode: null, bridge: false, official: false, runtime: 'web' });
-  lost.catalog.push({ id: 'kana.shortcuts.session-board',
+  // Alt still held when the base key comes up: that is the end of one tap, not
+  // the end of the gesture. Nothing commits on a short timer there — the board
+  // waits for the modifier release, so tapping Q again keeps moving instead of
+  // switching early.
+  const held = load({ mode: null, bridge: false, official: false, runtime: 'web' });
+  held.catalog.push({ id: 'kana.shortcuts.session-board',
     binding: { code: 'KeyQ', modifiers: ['alt'] } });
-  visitBoard(lost, ['s2', 's1']);
-  lost.actions.length = 0;
-  fireWindow(lost, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
-  fireWindow(lost, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
-  fireWindow(lost, 'keyup', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
-  assert.deepEqual(lost.actions, []);
+  visitBoard(held, ['s2', 's3', 's1']);
+  held.actions.length = 0;
+  const selectedIndex = () => {
+    const options = descendants(overlaySlot(held).component())
+      .filter((node) => node.props?.role === 'option');
+    return options.findIndex((node) => node.props['aria-selected'] === true);
+  };
+  fireWindow(held, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
+  fireWindow(held, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+  fireWindow(held, 'keyup', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+  const firstStep = selectedIndex();
+  assert.notEqual(firstStep, -1);
   await new Promise((resolve) => setTimeout(resolve, 600));
-  assert.deepEqual(lost.actions, ['open:s2']);
-  assert.equal(boardOpen(lost), false);
-  for (const off of lost.disposed.reverse()) off();
+  assert.deepEqual(held.actions, []);
+  assert.equal(boardOpen(held), true);
+  assert.equal(selectedIndex(), firstStep);
+  // A second tap while Alt is still down is one more step, not a commit.
+  fireWindow(held, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+  fireWindow(held, 'keyup', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+  assert.deepEqual(held.actions, []);
+  assert.equal(boardOpen(held), true);
+  assert.notEqual(selectedIndex(), firstStep);
+  // Only letting go of Alt commits.
+  { const opts = descendants(overlaySlot(held).component()).filter((n) => n.props?.role === 'option');
+    console.log('DEBUG sel', opts.findIndex((n) => n.props['aria-selected'] === true), 'of', opts.length); }
+  fireWindow(held, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
+  assert.equal(held.actions.length, 1);
+  assert.equal(boardOpen(held), false);
+  for (const off of held.disposed.reverse()) off();
 });
 
 test('a browser can swap Ctrl in for the Alt the system menu stole, and it still commits on release', () => {
