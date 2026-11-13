@@ -119,7 +119,7 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
     Date, Set, URLSearchParams,
     requestAnimationFrame(callback) { frames.push(callback); return frames.length; },
     cancelAnimationFrame() {},
-    Promise, console,
+    Promise, console, setTimeout, clearTimeout,
   };
   runInNewContext(source, context);
   const ctx = {
@@ -655,6 +655,61 @@ test('session board is offered on the community and NEXT Windows shells and on p
   assert.deepEqual(environment.actions, ['open:s2']);
   assert.equal(boardOpen(environment), false);
   for (const off of environment.disposed.reverse()) off();
+});
+
+test('a browser whose menu clears altKey still reads the gesture, and commits without the Alt release', async () => {
+  // Windows hands a bare Alt press to the window menu, so the key that follows
+  // can arrive with the modifier already cleared. The Alt press we did observe
+  // still marks the start of the gesture.
+  const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
+  web.catalog.push({ id: 'kana.shortcuts.session-board',
+    binding: { code: 'KeyQ', modifiers: ['alt'] } });
+  visitBoard(web, ['s2', 's3', 's1']);
+  web.actions.length = 0;
+  fireWindow(web, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
+  fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: false }));
+  assert.equal(boardNode(web).props['data-kana-session-board'], 'transient');
+  // A cleared modifier must not be read as "the gesture is over".
+  fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: false }));
+  assert.equal(boardNode(web).props['data-kana-session-board'], 'transient');
+  fireWindow(web, 'keyup', keyEvent({ code: 'KeyQ', key: 'q', altKey: false }));
+  assert.deepEqual(web.actions, []);
+  fireWindow(web, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
+  assert.deepEqual(web.actions, ['open:s2']);
+  for (const off of web.disposed.reverse()) off();
+
+  // When the release never arrives at all, the base keyup commits a moment
+  // later instead of leaving the board hanging.
+  const lost = load({ mode: null, bridge: false, official: false, runtime: 'web' });
+  lost.catalog.push({ id: 'kana.shortcuts.session-board',
+    binding: { code: 'KeyQ', modifiers: ['alt'] } });
+  visitBoard(lost, ['s2', 's1']);
+  lost.actions.length = 0;
+  fireWindow(lost, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
+  fireWindow(lost, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+  fireWindow(lost, 'keyup', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+  assert.deepEqual(lost.actions, []);
+  await new Promise((resolve) => setTimeout(resolve, 600));
+  assert.deepEqual(lost.actions, ['open:s2']);
+  assert.equal(boardOpen(lost), false);
+  for (const off of lost.disposed.reverse()) off();
+});
+
+test('a browser can swap Ctrl in for the Alt the system menu stole, and it still commits on release', () => {
+  const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
+  web.catalog.push({ id: 'kana.shortcuts.session-board',
+    binding: { code: 'KeyQ', modifiers: ['alt'] } });
+  visitBoard(web, ['s2', 's1']);
+  web.actions.length = 0;
+  fireWindow(web, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
+  fireWindow(web, 'keydown', keyEvent({ code: 'ControlLeft', key: 'Control', altKey: true, ctrlKey: true }));
+  fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true, ctrlKey: true }));
+  // Ctrl+Alt is a stand-in for the stolen bare Alt, not a request to pin.
+  assert.equal(boardNode(web).props['data-kana-session-board'], 'transient');
+  fireWindow(web, 'keyup', keyEvent({ code: 'ControlLeft', key: 'Control' }));
+  assert.deepEqual(web.actions, ['open:s2']);
+  assert.equal(boardOpen(web), false);
+  for (const off of web.disposed.reverse()) off();
 });
 
 test('the open board holds the desktop keyboard capture and moves itself', async () => {

@@ -35,6 +35,7 @@ window.__ModuleLoader__.load({
           panelKeys: '功能页速切', panelAction: '切换到功能页 {digit}',
           panelHelpDesktop: '社区 Stable Windows Desktop 可用 Ctrl+1～8 按左侧功能页顺序切换、Ctrl+9 打开最后一页；也可以单独录制键位。冲突时不接管。',
           panelHelpOfficial: '官方 Desktop 与 DSH NEXT 请为“切换到功能页”动作分别录制键位；固定 Ctrl+数字只在有旧桥的社区 Stable Windows Desktop 启用。',
+          panelHelpWeb: '在浏览器里 Ctrl+1～8 会被 Chrome/Edge 拿去切换标签页，页面收不到，所以这里改用 Ctrl+Alt+1～8 按左侧功能页顺序切换、Ctrl+Alt+9 打开最后一页。也可以用「切换到功能页」动作单独录制键位（浏览器需 Ctrl+Alt 或 Ctrl+Shift 形组合）。',
           noDevtools: '此动作只在有受控开发者工具桥的 Desktop 中显示；其他 Desktop 请用应用菜单。',
           panelTaken: '已被其他快捷键占用', panelNone: '暂无可切换的功能页',
           sessionHelp: '会话速切可连按轮换：短时间内连续按键会经过更多会话；“上一个会话”在最近访问的两个会话间往返。需先至少访问两个会话。系统 Alt+Tab 不会被接管。',
@@ -74,6 +75,7 @@ window.__ModuleLoader__.load({
           panelKeys: 'Quick panel switch', panelAction: 'Open function panel {digit}',
           panelHelpDesktop: 'On community Stable Windows Desktop, Ctrl+1–8 follow the left panel order and Ctrl+9 opens the last panel. You can also record separate shortcuts. Existing bindings take priority.',
           panelHelpOfficial: 'On official Desktop or DSH NEXT, record a separate shortcut for each function panel. Fixed Ctrl+digits needs the older community Stable Windows bridge.',
+          panelHelpWeb: 'In a browser Chrome and Edge keep Ctrl+1–8 for their own tabs, so the page never sees them. Use Ctrl+Alt+1–8 to follow the left panel order and Ctrl+Alt+9 for the last panel, or record each panel with the "Open function panel" action (the Web runtime wants a Ctrl+Alt or Ctrl+Shift combination).',
           noDevtools: 'This action requires a supported Desktop developer bridge; use the application menu elsewhere.',
           panelTaken: 'Used by another shortcut', panelNone: 'No panels available',
           sessionHelp: 'Press the recent-conversation shortcut repeatedly to cycle within a short interval. Previous conversation toggles between the two most recently visited. Visit two conversations first. System Alt+Tab is unchanged.',
@@ -138,6 +140,12 @@ window.__ModuleLoader__.load({
       const webReady = () => !officialReady() && !bridgeReady() && typeof window !== 'undefined';
       const pageReady = () => officialReady() || desktopReady() || webReady();
       const fixedPanelAvailable = () => desktopReady() && ctx.shortcuts.platform === 'windows';
+      const webPanelAvailable = () => webReady() && ctx.shortcuts.platform === 'windows';
+      // A browser keeps Ctrl+digit for its own tabs, so the Web build shifts the
+      // same idea one modifier over instead of pretending the combination works.
+      const panelPrefix = (digit) => webPanelAvailable()
+        ? `Ctrl + Alt + ${digit}`
+        : fixedPanelAvailable() ? `Ctrl + ${digit}` : `${digit}`;
       // The board commits on the Alt keyup, which is only observable while the
       // shell stops consuming that release itself: on Windows the window menu
       // eats the Alt keyup. Both shells implement the same pair — the client's
@@ -256,7 +264,11 @@ window.__ModuleLoader__.load({
       // The dispatcher consumes the base key's own release, but the Alt release
       // still reaches the page, so both are recorded for the whole session and the
       // board can tell that the tap already finished.
-      const keyWatch = { baseUpAt: 0, altUpAt: 0, lastBaseDownAt: 0 };
+      const keyWatch = { baseUpAt: 0, altUpAt: 0, lastBaseDownAt: 0, altDownAt: 0 };
+      // A browser may never deliver the Alt release (Windows gives a bare Alt to
+      // the window menu), so the board also commits a moment after the base key
+      // is let go. The timer is cancelled the instant the real release arrives.
+      let webCommitTimer = 0;
       // A "tap" is a press and release that finished before the command arrived.
       // The two shells report differently: the community shell resolves the
       // shortcut inside the renderer, so this document sees the whole gesture,
@@ -348,6 +360,10 @@ window.__ModuleLoader__.load({
         keyWatch.baseUpAt = 0;
         keyWatch.altUpAt = 0;
         keyWatch.lastBaseDownAt = 0;
+        if (webCommitTimer !== 0 && typeof clearTimeout === 'function') {
+          clearTimeout(webCommitTimer);
+          webCommitTimer = 0;
+        }
         board.ids = [];
         board.index = 0;
         if (board.detach) board.detach();
@@ -500,8 +516,12 @@ window.__ModuleLoader__.load({
         const altKey = event.code === 'AltLeft' || event.code === 'AltRight';
         if (boardMoves(event)) return;
         // Losing the modifier without the matching keyup means the release may
-        // never arrive; cancelling is the only outcome that cannot misfire.
-        if (board.mode === 'transient' && !altKey && !event.altKey) {
+        // never arrive; cancelling is the only outcome that cannot misfire. The
+        // browser path accepts the Alt press we saw as still being held, because
+        // Windows can deliver the key that follows with the modifier cleared.
+        const altGesture = event.altKey || (webReady() && keyWatch.altDownAt !== 0
+          && Date.now() - keyWatch.altDownAt <= 1500);
+        if (board.mode === 'transient' && !altKey && !altGesture) {
           closeBoard(true);
           return;
         }
@@ -547,7 +567,30 @@ window.__ModuleLoader__.load({
             return;
           }
         }
-        if (event.code !== 'AltLeft' && event.code !== 'AltRight' && event.key !== 'Alt') return;
+        if (webReady()) {
+          const binding = boardBaseBinding();
+          if (binding !== null && !binding.secondCode && event.code === binding.code) {
+            // The release is the only signal a browser is sure to give us: give
+            // the Alt release a moment to arrive, then commit anyway.
+            if (webCommitTimer === 0 && typeof setTimeout === 'function') {
+              webCommitTimer = setTimeout(() => {
+                webCommitTimer = 0;
+                commitBoard();
+              }, 400);
+            }
+            return;
+          }
+        }
+        // A browser may substitute Ctrl for the Alt the system stole, so either
+        // modifier letting go ends the gesture there.
+        const altRelease = event.code === 'AltLeft' || event.code === 'AltRight' || event.key === 'Alt';
+        const ctrlRelease = webReady()
+          && (event.code === 'ControlLeft' || event.code === 'ControlRight' || event.key === 'Control');
+        if (!altRelease && !ctrlRelease) return;
+        if (webCommitTimer !== 0 && typeof clearTimeout === 'function') {
+          clearTimeout(webCommitTimer);
+          webCommitTimer = 0;
+        }
         commitBoard();
       };
       const boardBlur = () => { closeBoard(false); };
@@ -818,11 +861,18 @@ window.__ModuleLoader__.load({
         const offMain = ctx.slots.subscribe('main', syncPanels);
         syncPanels();
         const offInput = ctx.shortcuts.observeFixedInput((input) => {
-          if (input.type !== 'keydown' || !fixedPanelAvailable() || !document.hasFocus()) return;
+          if (input.type !== 'keydown' || !document.hasFocus()) return;
           const { gesture, context } = input;
-          if (!/^Digit[1-9]$/.test(gesture.code) || !gesture.control || gesture.alt || gesture.shift || gesture.meta ||
+          if (!/^Digit[1-9]$/.test(gesture.code) || !gesture.control || gesture.shift || gesture.meta ||
               gesture.repeat || gesture.composing || gesture.defaultPrevented || context.modal !== null ||
               context.region === 'terminal' || occupied(gesture.code)) return;
+          // The shell reads a bare Ctrl+digit. A browser keeps that combination
+          // for its own tab bar, so the Web build asks for Ctrl+Alt+digit, which
+          // reaches the page and is also one of the combinations the Web runtime
+          // accepts.
+          const web = webPanelAvailable();
+          if (!fixedPanelAvailable() && !web) return;
+          if (web ? !gesture.alt : gesture.alt) return;
           const panel = panelForDigit(Number(gesture.code.slice(-1)));
           if (!panel || !ctx.slots.entriesOfSlot('main').some((entry) => entry.options.key === panel.id)) return;
           input.consume();
@@ -1142,14 +1192,14 @@ window.__ModuleLoader__.load({
         React.createElement('p', { style: { color: colors.secondary, fontSize: 13 } }, t('sessionHelp')),
         React.createElement('h3', { style: { margin: '24px 0 8px', fontSize: 16 } }, t('panelKeys')),
         React.createElement('p', { style: { color: colors.secondary, fontSize: 13 } },
-          t(fixedPanelAvailable() ? 'panelHelpDesktop' : 'panelHelpOfficial')),
+          t(webPanelAvailable() ? 'panelHelpWeb' : fixedPanelAvailable() ? 'panelHelpDesktop' : 'panelHelpOfficial')),
         panels.length === 0 ? React.createElement('p', null, t('panelNone')) :
           React.createElement('ul', { style: { paddingLeft: 20, lineHeight: 1.9 } },
             panels.slice(0, 8).map((panel, index) => React.createElement('li', { key: panel.id },
-              `${fixedPanelAvailable() ? `Ctrl + ${index + 1}` : `${index + 1}`} — ${panel.label}`,
+              `${panelPrefix(index + 1)} — ${panel.label}`,
               fixedPanelAvailable() && occupied(`Digit${index + 1}`) ? ` (${t('panelTaken')})` : '')),
             panels.length > 1 && React.createElement('li', { key: 'last' },
-              `${fixedPanelAvailable() ? 'Ctrl + 9' : '9'} — ${panels.at(-1).label}`,
+              `${panelPrefix(9)} — ${panels.at(-1).label}`,
               fixedPanelAvailable() && occupied('Digit9') ? ` (${t('panelTaken')})` : '')),
         switcherReady() && React.createElement('div', { 'data-kana-board-settings': '' },
           React.createElement('h3', { style: { margin: '24px 0 8px', fontSize: 16 } }, t('boardSection')),
@@ -1272,7 +1322,10 @@ window.__ModuleLoader__.load({
         const trackDown = (event) => {
           const binding = boardBaseBinding();
           if (event.code === 'AltLeft' || event.code === 'AltRight') {
-            if (!event.repeat) holdPreArm(event);
+            if (!event.repeat) {
+              keyWatch.altDownAt = event.ctrlKey || event.metaKey ? 0 : Date.now();
+              holdPreArm(event);
+            }
             return;
           }
           if (binding === null || binding.secondCode || event.code !== binding.code) {
@@ -1295,11 +1348,22 @@ window.__ModuleLoader__.load({
           // never be dispatched. Drive the board from this document as well: it
           // is the same keys the user recorded, only read one layer earlier.
           if (webReady() && switcherReady()) {
-            if (event.altKey && event.ctrlKey) {
-              // Ctrl+Alt+base is the pinned variant: it never commits on release.
+            // Windows hands a bare Alt press to the window menu, so the Q that
+            // follows can arrive with altKey already cleared. The Alt press we
+            // did see is therefore also accepted as the start of the gesture.
+            const recentAlt = keyWatch.altDownAt !== 0 && Date.now() - keyWatch.altDownAt <= 1500;
+            if (event.altKey && event.ctrlKey && event.shiftKey) {
+              // Pinning is the rare case: a third modifier keeps it reachable in
+              // a browser without stealing the ordinary gesture.
               if (board.mode === null) openBoard('pinned');
               else if (board.mode === 'transient') { board.mode = 'pinned'; publishBoard(); }
-            } else if (event.altKey) {
+            } else if (event.altKey || (recentAlt && !event.metaKey)) {
+              // Holding Alt and tapping again means "one more step", so a pending
+              // commit from the previous release has to be dropped first.
+              if (webCommitTimer !== 0 && typeof clearTimeout === 'function') {
+                clearTimeout(webCommitTimer);
+                webCommitTimer = 0;
+              }
               if (board.mode === null) openBoard('transient');
               else moveBoard(event.shiftKey ? -1 : 1);
             }
