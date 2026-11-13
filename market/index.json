@@ -5,8 +5,8 @@
     "zh": "Remu 桌面快捷键"
   },
   "description": {
-    "en": "Keyboard-first shortcuts for DSH Desktop, including the Alt+Tab style session switcher.",
-    "zh": "给 DSH Desktop 用的快捷键插件，含 Alt+Tab 风格的会话轮切板。"
+    "en": "Keyboard-first shortcuts for DSH Desktop and DSH Web, including the Alt+Tab style session switcher.",
+    "zh": "给 DSH Desktop 与 DSH Web 用的快捷键插件，含 Alt+Tab 风格的会话轮切板。"
   },
   "metadata": {
     "categories": {
@@ -72,6 +72,15 @@
         ]
       },
       "versions": [
+        {
+          "version": "0.4.9",
+          "publishTimestamp": 1794571726,
+          "source": {
+            "type": "git",
+            "url": "https://github.com/KhalilJar/Remu-desktop-shortcuts",
+            "commit": "babc087cb2a10ef1d8e1a8f8147417c082af0e36"
+          }
+        },
         {
           "version": "0.4.8",
           "publishTimestamp": 1794410899,
