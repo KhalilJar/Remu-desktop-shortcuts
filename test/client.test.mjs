@@ -990,6 +990,64 @@ test('board binding save writes nothing when a derived combination is taken', as
   for (const off of environment.disposed.reverse()) off();
 });
 
+test('a browser opens the board with a bare Alt+Q although DSH cannot store that row', () => {
+  // bindingIssue() answers "unsupported-browser" for an Alt-only combination on
+  // the Web runtime, so the base row can never be persisted there. The gesture
+  // is read from this document, and the letter defaults to Q.
+  const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
+  assert.equal(web.catalog.length, 0);
+  visitBoard(web, ['s2', 's1']);
+  web.actions.length = 0;
+  fireWindow(web, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
+  fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+  assert.equal(boardNode(web).props['data-kana-session-board'], 'transient');
+  fireWindow(web, 'keyup', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+  assert.deepEqual(web.actions, []);
+  fireWindow(web, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
+  assert.deepEqual(web.actions, ['open:s2']);
+  for (const off of web.disposed.reverse()) off();
+});
+
+test('a browser derives the bare Alt gesture from the one board row it can store', () => {
+  // Only the Ctrl+Alt variant is savable on Web; the letter it carries is what
+  // the bare Alt gesture must use, so a re-recorded Alt+W reaches the board.
+  const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
+  web.catalog.push({ id: 'kana.shortcuts.session-board-pin',
+    binding: { code: 'KeyW', modifiers: ['control', 'alt'] } });
+  visitBoard(web, ['s2', 's1']);
+  web.actions.length = 0;
+  fireWindow(web, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
+  fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+  assert.equal(boardOpen(web), false);
+  fireWindow(web, 'keydown', keyEvent({ code: 'KeyW', key: 'w', altKey: true }));
+  assert.equal(boardNode(web).props['data-kana-session-board'], 'transient');
+  fireWindow(web, 'keyup', keyEvent({ code: 'KeyW', key: 'w', altKey: true }));
+  fireWindow(web, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
+  assert.deepEqual(web.actions, ['open:s2']);
+  for (const off of web.disposed.reverse()) off();
+});
+
+test('a browser board recorder saves only the variant the Web runtime accepts', async () => {
+  const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
+  assert.equal(descendants(web.slots[0].component())
+    .find((node) => node.props?.['data-kana-board-settings'] !== undefined)
+    .props['data-kana-board-settings'], '');
+  const record = descendants(web.slots[0].component())
+    .find((node) => node.type === 'button' && node.props['aria-label'] === 'boardRecord');
+  record.props.onClick();
+  await flush();
+  web.documentListeners.get('keydown')(keyEvent({ code: 'KeyK', altKey: true }));
+  web.documentListeners.get('keyup')(keyEvent({ code: 'KeyK', altKey: true }));
+  await flush();
+  // Writing the Alt-only rows would be refused by DSH and fail the whole save,
+  // so the browser stores the derived Ctrl+Alt row and keeps the rest local.
+  assert.deepEqual(web.edits.map((entry) => JSON.stringify(entry.operation)), [
+    JSON.stringify({ type: 'set', id: 'kana.shortcuts.session-board-pin',
+      binding: { code: 'KeyK', modifiers: ['control', 'alt'] } }),
+  ]);
+  for (const off of web.disposed.reverse()) off();
+});
+
 test('board settings stay out of the ordinary action list', () => {
   // Plain Web hosts the board too, so its settings page carries the Alt-only
   // recorder as well.

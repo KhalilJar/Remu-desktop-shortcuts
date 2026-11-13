@@ -40,9 +40,9 @@ window.__ModuleLoader__.load({
           panelTaken: '已被其他快捷键占用', panelNone: '暂无可切换的功能页',
           sessionHelp: '会话速切可连按轮换：短时间内连续按键会经过更多会话；“上一个会话”在最近访问的两个会话间往返。需先至少访问两个会话。系统 Alt+Tab 不会被接管。',
           board: '会话轮切板', boardBack: '会话轮切板（反向）', boardPin: '会话轮切板（固定模式）',
-          boardSection: '会话轮切板（DSH NEXT / Windows）',
+          boardSection: '会话轮切板（DSH NEXT / Windows / 浏览器）',
           boardHelp: '录一次 Alt + 普通键（例如 Alt+Q）。插件据此派生 Shift+Alt+Q 反向移动与 Ctrl+Alt+Q 固定模式；三者任一被占用就不保存，原键位保持不变。按住 Alt 连按基础键移动高亮，松开 Alt 才切换；Esc 取消。',
-          boardHelpWeb: '在浏览器里录一次 Alt + 普通键（例如 Alt+Q）。浏览器版没有窗口菜单抢 Alt，松开即可切换；但 Firefox 会把单独的 Alt 交给菜单，建议用 Chrome 或 Edge。',
+          boardHelpWeb: '浏览器里默认直接按 Alt+Q 就能开板，不必先录制。想换字母时录一次 Alt + 普通键：DSH 的 Web 运行时只肯保存 Ctrl+Alt 那一条，插件会从它推导出纯 Alt 手势；Firefox 会把单独的 Alt 交给菜单，建议用 Chrome 或 Edge。',
           boardRecord: '＋ 录制轮切键',
           boardRecording: '请按住 Alt 再按一个普通键（如 Alt+Q）；再点按钮或 Esc 取消',
           boardInvalid: '轮切键必须只带 Alt：请按住 Alt，再按一个普通键。',
@@ -80,9 +80,9 @@ window.__ModuleLoader__.load({
           panelTaken: 'Used by another shortcut', panelNone: 'No panels available',
           sessionHelp: 'Press the recent-conversation shortcut repeatedly to cycle within a short interval. Previous conversation toggles between the two most recently visited. Visit two conversations first. System Alt+Tab is unchanged.',
           board: 'Session board', boardBack: 'Session board (backwards)', boardPin: 'Session board (pinned)',
-          boardSection: 'Session board (DSH NEXT / Windows)',
+          boardSection: 'Session board (DSH NEXT / Windows / browser)',
           boardHelp: 'Record Alt + an ordinary key once (for example Alt+Q). Shift+Alt+Q moves backwards and Ctrl+Alt+Q pins the board; if any of the three is taken, nothing is saved. Hold Alt and tap the base key to move, release Alt to switch; Esc cancels.',
-          boardHelpWeb: 'Record Alt + an ordinary key in the browser (for example Alt+Q). There is no window menu to steal the Alt release, so releasing switches; Firefox hands a bare Alt to its menu, so Chrome or Edge is recommended.',
+          boardHelpWeb: 'In a browser Alt+Q works out of the box; you do not have to record it. To pick another letter, record Alt + an ordinary key once: the Web runtime only accepts the Ctrl+Alt variant, and the plugin derives the bare Alt gesture from it. Firefox hands a bare Alt to its menu, so Chrome or Edge is recommended.',
           boardRecord: '＋ Record board key',
           boardRecording: 'Hold Alt and press an ordinary key (for example Alt+Q); click again or Esc to cancel',
           boardInvalid: 'The board key must use Alt only: hold Alt and press an ordinary key.',
@@ -410,10 +410,31 @@ window.__ModuleLoader__.load({
         if (typeof service?.recording !== 'function') return;
         void Promise.resolve(service.recording(false)).catch(() => {});
       };
+      const boardCodeLabel = (code) => String(code ?? '').replace(/^(Key|Digit)/u, '');
+      // DSH's Web runtime refuses Alt-only bindings on its own save path, so a
+      // browser can never store the board's base row. The gesture is read from
+      // this document instead, which leaves only the base letter to recover: it
+      // comes from whichever board row the browser could store (the Ctrl+Alt
+      // variant) and falls back to Q, the letter documented for the board.
+      const webBoardCode = () => {
+        try {
+          const catalog = ctx.shortcuts.catalog.getSnapshot();
+          const stored = boardIds.map((id) => catalog.find((row) => row.id === id)?.binding)
+            .find((binding) => binding && !binding.secondCode);
+          return stored?.code ?? 'KeyQ';
+        } catch (error) {
+          console.error('kana-desktop-shortcuts: board binding read failed', error);
+          return 'KeyQ';
+        }
+      };
       // The base combination is read back from the shortcut catalog so the board
       // never hard-codes a key the user may have re-recorded.
       const boardBaseBinding = () => {
         try {
+          // On Web the row is unsaveable rather than empty, and letting that
+          // disable the gesture is exactly why a bare Alt+Q did nothing there:
+          // derive the pure Alt binding from the stored letter instead.
+          if (webReady()) return { code: webBoardCode(), modifiers: ['alt'] };
           return ctx.shortcuts.catalog.getSnapshot()
             .find((row) => row.id === boardIds[0])?.binding ?? null;
         } catch (error) {
@@ -937,14 +958,29 @@ window.__ModuleLoader__.load({
           }
         };
         const boardBaseRow = catalog.find((row) => row.id === boardIds[0]);
-        const boardBindingText = () => boardBaseRow?.keys?.length ? boardBaseRow.keys.join('') : t('empty');
+        // The browser keeps the Ctrl+Alt row only, while the key the user
+        // actually presses is the bare Alt one, so the panel names the gesture.
+        const boardStoredRow = webReady()
+          ? boardIds.map((id) => catalog.find((row) => row.id === id))
+            .find((row) => row?.binding && !row.binding.secondCode)
+          : boardBaseRow;
+        const boardBindingText = () => {
+          if (webReady()) return `Alt + ${boardCodeLabel(webBoardCode())}`;
+          return boardBaseRow?.keys?.length ? boardBaseRow.keys.join('') : t('empty');
+        };
         // The three derived combinations are saved together: either all of them
         // are free and get written, or nothing changes at all.
         const saveBoardBinding = async (candidate) => {
           if (!switcherReady() || config.status !== 'ready' || busy || boardBusy) return;
           const modifiers = [['alt'], ['alt', 'shift'], ['control', 'alt']];
-          const targets = boardIds.map((id, index) => ({
-            id,
+          // A browser can only persist the Ctrl+Alt variant: DSH refuses an
+          // Alt-only binding on the Web runtime, so writing all three rows made
+          // the whole save fail and left the board unusable there. That one row
+          // carries the letter, and the plain Alt / Shift+Alt gestures are
+          // derived from it locally.
+          const rows = webReady() ? [2] : [0, 1, 2];
+          const targets = rows.map((index) => ({
+            id: boardIds[index],
             binding: candidate === null ? null : { code: candidate.code, modifiers: modifiers[index] },
           }));
           setBoardBusy(true);
@@ -1225,7 +1261,7 @@ window.__ModuleLoader__.load({
               borderRadius: 8, padding: '7px 12px', cursor: 'pointer' },
           }, boardRecording ? boardRecordReady ? t('boardRecording') : t('preparing') : t('boardRecord')),
           button(t('clear'), () => void saveBoardBinding(null),
-            !available || boardRecording || boardBusy || !boardBaseRow?.binding)),
+            !available || boardRecording || boardBusy || !boardStoredRow?.binding)),
           boardMessage && React.createElement('p', { role: 'status', style: { color: colors.error } }, boardMessage)),
         message && React.createElement('p', { role: 'status', style: { color: colors.error } }, message));
       }
