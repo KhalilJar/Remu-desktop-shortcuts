@@ -5,7 +5,17 @@
 set -euo pipefail
 
 PATTERN='dsh web --host 127.0.0.1 --port 3080'
-OLD=$(pgrep -f "$PATTERN" | head -n 1 || true)
+find_pid() {
+  local pid
+  for pid in $(pgrep -f "$PATTERN" || true); do
+    [ "$(cat "/proc/${pid}/comm" 2>/dev/null)" = "node" ] || continue
+    echo "$pid"
+    return 0
+  done
+  return 1
+}
+
+OLD=$(find_pid || true)
 if [ -z "${OLD}" ]; then
   echo "no running dsh web process found" >&2
   exit 1
@@ -29,7 +39,7 @@ fi
 setsid nohup ${CMD} >>/tmp/dsh-web-restart.log 2>&1 < /dev/null &
 sleep 3
 
-NEW=$(pgrep -f "$PATTERN" | head -n 1 || true)
+NEW=$(find_pid || true)
 if [ -z "${NEW}" ]; then
   echo "restart failed; see /tmp/dsh-web-restart.log" >&2
   tail -n 30 /tmp/dsh-web-restart.log >&2 || true
