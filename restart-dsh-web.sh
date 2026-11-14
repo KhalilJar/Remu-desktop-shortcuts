@@ -1,69 +1,50 @@
 #!/usr/bin/env bash
-# Restart the detached `dsh web` process so a changed plugin client bundle is
-# re-read from disk. It keeps the exact argv of the running process and starts
-# the new one in its own session, so it survives the caller going away.
+# 安全重启 systemd 托管的 dsh web（deepseek-harness.service）。
+#
+# 背景（2026-11-14 事故）：旧脚本 kill 掉主进程后，用 setsid nohup 拉起新进程。
+# 当脚本本身跑在 DSH 会话里时，杀掉 dsh 会连带清掉脚本所在的 cgroup：
+# 新进程没起来，而且 dsh 是以 exit 0 退出的，systemd 的 Restart=on-failure
+# 把它当成「正常结束」不重启 —— 服务彻底消失，前端一直 502。
+#
+# 现在改成：一切交给 systemd；并且用 systemd-run 起一个瞬时 unit 去执行
+# restart，这样即使从 DSH 会话内部调用，也不会被自己所在的 cgroup 清理掉。
 set -euo pipefail
 
-PATTERN='dsh web'
-PORT='3080'
+UNIT=deepseek-harness.service
+PORT=3080
+HEALTH="http://127.0.0.1:${PORT}/"
 
-# The server's /proc/<pid>/comm reads "MainThread" (Node names its main thread),
-# so the process has to be identified by the argv it was started with.
-find_pid() {
-  local pid cmd
-  for pid in $(pgrep -f "$PATTERN" || true); do
-    [ "$pid" = "$$" ] && continue
-    [ -r "/proc/${pid}/cmdline" ] || continue
-    cmd=$(tr '\0' ' ' < "/proc/${pid}/cmdline" || true)
-    case "$cmd" in
-      *restart-dsh-web*) continue ;;
-      *"dsh web --host"*"--port ${PORT}"*) echo "$pid"; return 0 ;;
-    esac
-  done
-  return 1
-}
+if [ "$(id -u)" -eq 0 ]; then SUDO=(); else SUDO=(sudo -n); fi
 
-OLD=$(find_pid || true)
-if [ -z "${OLD}" ]; then
-  echo "no running dsh web process found" >&2
+if ! "${SUDO[@]}" systemctl cat "$UNIT" >/dev/null 2>&1; then
+  echo "找不到单元 $UNIT；请确认服务名。" >&2
   exit 1
 fi
 
-CMD=$(tr '\0' ' ' < "/proc/${OLD}/cmdline")
-echo "old pid: ${OLD}"
-echo "argv:    ${CMD}"
+if grep -qs "$UNIT" /proc/self/cgroup 2>/dev/null; then
+  echo "（当前进程就在 $UNIT 的 cgroup 内，改用瞬时 unit 重启，避免把自己一起杀掉）"
+fi
 
-WORKDIR=$(readlink "/proc/${OLD}/cwd" 2>/dev/null || echo "$HOME")
+echo "==> systemctl restart $UNIT"
+if command -v systemd-run >/dev/null 2>&1; then
+  "${SUDO[@]}" systemd-run --collect --quiet \
+    --unit="dsh-restart-$(date +%s)" \
+    --on-active=1 \
+    systemctl restart "$UNIT"
+else
+  # 没有 systemd-run 时退化为直接重启；仅在 cgroup 外调用才安全。
+  "${SUDO[@]}" systemctl restart "$UNIT"
+fi
 
-kill "${OLD}"
+echo "==> 等待 ${HEALTH} 恢复（最多 60 秒）"
 for _ in $(seq 1 60); do
-  kill -0 "${OLD}" 2>/dev/null || break
-  sleep 0.25
-done
-if kill -0 "${OLD}" 2>/dev/null; then
-  echo "process ${OLD} did not exit; aborting" >&2
-  exit 1
-fi
-
-cd "${WORKDIR}" || cd "$HOME"
-# shellcheck disable=SC2086
-setsid nohup ${CMD} >>/tmp/dsh-web-restart.log 2>&1 < /dev/null &
-sleep 3
-
-NEW=$(find_pid || true)
-if [ -z "${NEW}" ]; then
-  echo "restart failed; see /tmp/dsh-web-restart.log" >&2
-  tail -n 30 /tmp/dsh-web-restart.log >&2 || true
-  exit 1
-fi
-
-echo "new pid: ${NEW}"
-for _ in $(seq 1 40); do
-  if curl -s -o /dev/null -m 2 "http://127.0.0.1:${PORT}/"; then
-    echo "dsh web answers on 127.0.0.1:${PORT}"
+  if curl -s -o /dev/null -m 2 "$HEALTH"; then
+    echo "✅ 已恢复：$(systemctl is-active "$UNIT")，MainPID=$(systemctl show -p MainPID --value "$UNIT")"
     exit 0
   fi
-  sleep 0.5
+  sleep 1
 done
-echo "dsh web started but the port is not answering yet; see /tmp/dsh-web-restart.log" >&2
+
+echo "❌ 60 秒内未恢复，最近日志：" >&2
+"${SUDO[@]}" journalctl -u "$UNIT" -n 30 --no-pager >&2 || true
 exit 1

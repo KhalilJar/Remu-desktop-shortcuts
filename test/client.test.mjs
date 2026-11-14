@@ -733,6 +733,55 @@ test('a browser can swap Ctrl in for the Alt the system menu stole, and it still
   for (const off of web.disposed.reverse()) off();
 });
 
+const selectedAt = (environment) => cardsOf(boardNode(environment))
+  .findIndex((card) => card.props['aria-selected'] === true);
+
+test('Shift steps an open browser board backwards instead of pinning it', () => {
+  const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
+  web.catalog.push({ id: 'kana.shortcuts.session-board',
+    binding: { code: 'KeyQ', modifiers: ['alt'] } });
+  visitBoard(web, ['s2', 's3', 's1']);
+  web.actions.length = 0;
+  fireWindow(web, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
+  fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+  const opened = selectedAt(web);
+  assert.notEqual(opened, -1);
+  // The Ctrl+Alt stand-in is what a user reaches for after the browser stole
+  // Alt, so adding Shift there has to step back — it used to freeze the board
+  // in pinned mode instead.
+  fireWindow(web, 'keydown', keyEvent({ code: 'ControlLeft', key: 'Control', altKey: true, ctrlKey: true }));
+  fireWindow(web, 'keydown', keyEvent({ code: 'ShiftLeft', key: 'Shift', altKey: true, ctrlKey: true, shiftKey: true }));
+  fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true, ctrlKey: true, shiftKey: true }));
+  assert.equal(boardNode(web).props['data-kana-session-board'], 'transient');
+  assert.notEqual(selectedAt(web), opened);
+  for (const off of web.disposed.reverse()) off();
+});
+
+test('a pinned browser board opens deliberately and then steps with a plain key', () => {
+  const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
+  web.catalog.push({ id: 'kana.shortcuts.session-board',
+    binding: { code: 'KeyQ', modifiers: ['alt'] } });
+  visitBoard(web, ['s2', 's3', 's1']);
+  fireWindow(web, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
+  fireWindow(web, 'keydown', keyEvent({ code: 'ControlLeft', key: 'Control', altKey: true, ctrlKey: true }));
+  fireWindow(web, 'keydown', keyEvent({ code: 'ShiftLeft', key: 'Shift', altKey: true, ctrlKey: true, shiftKey: true }));
+  fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true, ctrlKey: true, shiftKey: true }));
+  assert.equal(boardNode(web).props['data-kana-session-board'], 'pinned');
+  const opened = selectedAt(web);
+  fireWindow(web, 'keyup', keyEvent({ code: 'KeyQ', key: 'q' }));
+  fireWindow(web, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
+  // A pinned board waits for the user, so the bare key steps and Shift reverses
+  // even with no modifier held — otherwise it felt stuck until Ctrl+Alt was held.
+  fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q' }));
+  assert.notEqual(selectedAt(web), opened);
+  fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', shiftKey: true }));
+  assert.equal(selectedAt(web), opened);
+  fireWindow(web, 'keyup', keyEvent({ code: 'KeyQ', key: 'q' }));
+  fireWindow(web, 'keydown', keyEvent({ code: 'Enter', key: 'Enter' }));
+  assert.equal(boardOpen(web), false);
+  for (const off of web.disposed.reverse()) off();
+});
+
 test('the open board holds the desktop keyboard capture and moves itself', async () => {
   const environment = load(nextWindows);
   environment.catalog.push({ id: 'kana.shortcuts.session-board', binding: { code: 'KeyQ', modifiers: ['alt'] } });

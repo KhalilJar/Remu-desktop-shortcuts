@@ -42,7 +42,7 @@ window.__ModuleLoader__.load({
           board: '会话轮切板', boardBack: '会话轮切板（反向）', boardPin: '会话轮切板（固定模式）',
           boardSection: '会话轮切板（DSH NEXT / Windows / 浏览器）',
           boardHelp: '录一次 Alt + 普通键（例如 Alt+Q）。插件据此派生 Shift+Alt+Q 反向移动与 Ctrl+Alt+Q 固定模式；三者任一被占用就不保存，原键位保持不变。按住 Alt 连按基础键移动高亮，松开 Alt 才切换；Esc 取消。',
-          boardHelpWeb: '浏览器里默认直接按 Alt+Q 就能开板，不必先录制。想换字母时录一次 Alt + 普通键：DSH 的 Web 运行时只肯保存 Ctrl+Alt 那一条，插件会从它推导出纯 Alt 手势。按住 Alt 连按 Q 会一直往前走，松开 Alt 才真正切换；Firefox 会把单独的 Alt 交给菜单，建议用 Chrome 或 Edge。',
+          boardHelpWeb: '浏览器里默认直接按 Alt+Q 就能开板，不必先录制。想换字母时录一次 Alt + 普通键：DSH 的 Web 运行时只肯保存 Ctrl+Alt 那一条，插件会从它推导出纯 Alt 手势。按住 Alt 连按 Q 会一直往前走、加 Shift 往回走，松开 Alt 才真正切换；固定板只在板子关着时用 Ctrl+Shift+Alt+Q 打开，打开后 Q 直接前进、Shift+Q 后退；Firefox 会把单独的 Alt 交给菜单，建议用 Chrome 或 Edge。',
           boardRecord: '＋ 录制轮切键',
           boardRecording: '请按住 Alt 再按一个普通键（如 Alt+Q）；再点按钮或 Esc 取消',
           boardInvalid: '轮切键必须只带 Alt：请按住 Alt，再按一个普通键。',
@@ -50,7 +50,7 @@ window.__ModuleLoader__.load({
           boardUntitled: '未命名会话', boardNoWorkspace: '未分组',
           boardRemove: '从本次候选移除',
           boardTransientHint: '按住 Alt 连按切换 · 松开 Alt 打开高亮会话 · Esc 取消 · Delete 移除',
-          boardPinnedHint: 'Enter 或点击打开 · 方向键移动 · Esc 取消 · Delete 移除',
+          boardPinnedHint: 'Enter 或点击打开 · 基础键前进、Shift+基础键后退 · Esc 取消 · Delete 移除',
           boardNone: '本次启动还没有可轮切的会话：请先访问至少两个会话。',
           boardFocus: '当前焦点在内嵌网页里，无法确认 Alt 松开；请先点回会话内容再按。',
           boardGone: '高亮的会话已不可用，已取消切换。',
@@ -82,7 +82,7 @@ window.__ModuleLoader__.load({
           board: 'Session board', boardBack: 'Session board (backwards)', boardPin: 'Session board (pinned)',
           boardSection: 'Session board (DSH NEXT / Windows / browser)',
           boardHelp: 'Record Alt + an ordinary key once (for example Alt+Q). Shift+Alt+Q moves backwards and Ctrl+Alt+Q pins the board; if any of the three is taken, nothing is saved. Hold Alt and tap the base key to move, release Alt to switch; Esc cancels.',
-          boardHelpWeb: 'In a browser Alt+Q works out of the box; you do not have to record it. To pick another letter, record Alt + an ordinary key once: the Web runtime only accepts the Ctrl+Alt variant, and the plugin derives the bare Alt gesture from it. Tapping Q again while Alt is held keeps stepping, and the switch happens when Alt is released. Firefox hands a bare Alt to its menu, so Chrome or Edge is recommended.',
+          boardHelpWeb: 'In a browser Alt+Q works out of the box; you do not have to record it. To pick another letter, record Alt + an ordinary key once: the Web runtime only accepts the Ctrl+Alt variant, and the plugin derives the bare Alt gesture from it. Tapping Q again while Alt is held keeps stepping and Shift steps back; the switch happens when Alt is released. Pin with Ctrl+Shift+Alt+Q while the board is closed, and a pinned board then steps with a bare Q and reverses with Shift+Q. Firefox hands a bare Alt to its menu, so Chrome or Edge is recommended.',
           boardRecord: '＋ Record board key',
           boardRecording: 'Hold Alt and press an ordinary key (for example Alt+Q); click again or Esc to cancel',
           boardInvalid: 'The board key must use Alt only: hold Alt and press an ordinary key.',
@@ -90,7 +90,7 @@ window.__ModuleLoader__.load({
           boardUntitled: 'Untitled conversation', boardNoWorkspace: 'No workspace',
           boardRemove: 'Remove from this launch',
           boardTransientHint: 'Hold Alt and tap to move · release Alt to open · Esc cancels · Delete removes',
-          boardPinnedHint: 'Enter or click to open · arrow keys move · Esc cancels · Delete removes',
+          boardPinnedHint: 'Enter or click to open · base key steps, Shift reverses · Esc cancels · Delete removes',
           boardNone: 'No conversations to switch between in this launch: visit at least two first.',
           boardFocus: 'Focus is inside an embedded page, so the Alt release cannot be observed; click back into the conversation first.',
           boardGone: 'The highlighted conversation is no longer available; nothing was opened.',
@@ -1395,11 +1395,23 @@ window.__ModuleLoader__.load({
             // follows can arrive with altKey already cleared. The Alt press we
             // did see is therefore also accepted as the start of the gesture.
             const recentAlt = keyWatch.altDownAt !== 0 && Date.now() - keyWatch.altDownAt <= 1500;
-            if (event.altKey && event.ctrlKey && event.shiftKey) {
+            // A pinned board is already waiting for the user: the gesture is
+            // over and no modifier is needed any more, so a plain key steps and
+            // Shift reverses. Requiring the full combination there only made a
+            // pinned board feel stuck (a bare Alt press is taken by the browser
+            // menu, so Alt+Q never arrived).
+            if (board.mode === 'pinned') {
+              if (event.repeat) return;
+              moveBoard(event.shiftKey ? -1 : 1);
+              return;
+            }
+            if (board.mode === null && event.altKey && event.ctrlKey && event.shiftKey) {
               // Pinning is the rare case: a third modifier keeps it reachable in
-              // a browser without stealing the ordinary gesture.
-              if (board.mode === null) openBoard('pinned');
-              else if (board.mode === 'transient') { board.mode = 'pinned'; publishBoard(); }
+              // a browser without stealing the ordinary gesture. Only a CLOSED
+              // board may be pinned this way — Shift is the reverse key for an
+              // open one, so Ctrl+Shift+Alt+Q must step back, not freeze the
+              // board where it stands.
+              openBoard('pinned');
             } else if (event.altKey || (recentAlt && !event.metaKey)) {
               // Holding Alt and tapping again means "one more step", so a pending
               // commit from the previous release has to be dropped first.
