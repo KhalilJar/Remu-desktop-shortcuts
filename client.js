@@ -43,6 +43,9 @@ window.__ModuleLoader__.load({
           boardSection: '会话轮切板（DSH NEXT / Windows / 浏览器）',
           boardHelp: '录一次 Alt + 普通键（例如 Alt+Q）。插件据此派生 Shift+Alt+Q 反向移动与 Ctrl+Alt+Q 固定模式；三者任一被占用就不保存，原键位保持不变。按住 Alt 连按基础键移动高亮，松开 Alt 才切换；Esc 取消。',
           boardHelpWeb: '浏览器里默认直接按 Alt+Q 就能开板，不必先录制。想换字母时录一次 Alt + 普通键：DSH 的 Web 运行时只肯保存 Ctrl+Alt 那一条，插件会从它推导出纯 Alt 手势。按住 Alt 连按 Q 会一直往前走、加 Shift 往回走，松开 Alt 才真正切换；固定板只在板子关着时用 Ctrl+Shift+Alt+Q 打开，打开后 Q 直接前进、Shift+Q 后退；Firefox 会把单独的 Alt 交给菜单，建议用 Chrome 或 Edge。',
+          boardHelpOfficial: '官方桌面壳里轮切板无需录制：直接按住 Alt 点按 Q（按住 Shift 反向，板子关着时用 Ctrl+Shift+Alt+Q 打开固定板）。这里故意不提供录制——一旦在 DSH 的快捷键页录下纯 Alt 组合，原生的快捷键分发就会接管这次按键，内容页收不到按下和抬起，Alt+Q 反而整条失效；录过的请点「移除」清掉，立刻恢复。',
+          boardNoRecord: '无需录制，直接按 Alt + 基础键',
+          boardRecorded: '检测到已录制的轮切键：官方壳里录制会让原生分发接管按键，Alt+Q 会失效。点「移除」清掉即可恢复。',
           boardRecord: '＋ 录制轮切键',
           boardRecording: '请按住 Alt 再按一个普通键（如 Alt+Q）；再点按钮或 Esc 取消',
           boardInvalid: '轮切键必须只带 Alt：请按住 Alt，再按一个普通键。',
@@ -83,6 +86,9 @@ window.__ModuleLoader__.load({
           boardSection: 'Session board (DSH NEXT / Windows / browser)',
           boardHelp: 'Record Alt + an ordinary key once (for example Alt+Q). Shift+Alt+Q moves backwards and Ctrl+Alt+Q pins the board; if any of the three is taken, nothing is saved. Hold Alt and tap the base key to move, release Alt to switch; Esc cancels.',
           boardHelpWeb: 'In a browser Alt+Q works out of the box; you do not have to record it. To pick another letter, record Alt + an ordinary key once: the Web runtime only accepts the Ctrl+Alt variant, and the plugin derives the bare Alt gesture from it. Tapping Q again while Alt is held keeps stepping and Shift steps back; the switch happens when Alt is released. Pin with Ctrl+Shift+Alt+Q while the board is closed, and a pinned board then steps with a bare Q and reverses with Shift+Q. Firefox hands a bare Alt to its menu, so Chrome or Edge is recommended.',
+          boardHelpOfficial: 'On the official desktop shell the board needs no recording: hold Alt and tap Q (hold Shift to go backwards, Ctrl+Shift+Alt+Q opens a pinned board while it is closed). Recording is deliberately not offered here — once a bare Alt combination is recorded in DSH settings, the native dispatcher takes the key and the page never sees the press or the release, which breaks Alt+Q entirely. Clear it with Remove and it works again immediately.',
+          boardNoRecord: 'No recording needed — just press Alt + the base key',
+          boardRecorded: 'A board key is recorded: on this shell recording hands the keys to the native dispatcher and Alt+Q stops working. Click Remove to restore it.',
           boardRecord: '＋ Record board key',
           boardRecording: 'Hold Alt and press an ordinary key (for example Alt+Q); click again or Esc to cancel',
           boardInvalid: 'The board key must use Alt only: hold Alt and press an ordinary key.',
@@ -170,6 +176,12 @@ window.__ModuleLoader__.load({
         (nextDeveloperReady() || desktopReady()) &&
           ctx.shortcuts.platform === 'windows' && typeof ctx.shortcuts.recording === 'function'
       ) || (documentGesture() && ctx.shortcuts.platform === 'windows');
+      // 官方桌面壳里轮切板改由文档驱动，录制反而有害：只要在 DSH 的
+      // 快捷键页录下纯 Alt 组合，原生的快捷键分发就会接管这次按键，
+      // 内容页收不到按下与抬起，整条手势随之失效（实测：录制后
+      // Alt+Q 不能开板，恢复默认后立刻又好）。所以设置页在这种
+      // 环境里只展示「无需录制」，并把录制按钮藏起来。
+      const boardWithoutRecording = () => documentGesture() && !webReady();
 
       // DSH 负责键盘分发、冲突检查和存储。保留原有动作 ID，
       // 这样各运行时已保存的偏好设置不受影响。
@@ -1037,14 +1049,13 @@ window.__ModuleLoader__.load({
           }
         };
         const boardBaseRow = catalog.find((row) => row.id === boardIds[0]);
-        // 浏览器只保留 Ctrl+Alt 那一行，而用户实际按的
-        // 是单独的 Alt，所以面板按手势的实际形态来命名。
-        const boardStoredRow = webReady()
-          ? boardIds.map((id) => catalog.find((row) => row.id === id))
-            .find((row) => row?.binding && !row.binding.secondCode)
-          : boardBaseRow;
+        // 只要三行里任意一行还留着录制结果，就说明用户碰过录制按钮：
+        // 在官方壳里这意味着手势正被原生的快捷键分发截走，
+        // 而浏览器里它只是用户自己选的字母。
+        const boardRecordedRow = boardIds.map((id) => catalog.find((row) => row.id === id))
+          .find((row) => row?.binding);
         const boardBindingText = () => {
-          if (webReady()) return `Alt + ${boardCodeLabel(webBoardCode())}`;
+          if (webReady() || boardWithoutRecording()) return `Alt + ${boardCodeLabel(webBoardCode())}`;
           return boardBaseRow?.keys?.length ? boardBaseRow.keys.join('') : t('empty');
         };
         // 三个派生组合一起保存：要么三者都
@@ -1319,29 +1330,35 @@ window.__ModuleLoader__.load({
         switcherReady() && React.createElement('div', { 'data-kana-board-settings': '' },
           React.createElement('h3', { style: { margin: '24px 0 8px', fontSize: 16 } }, t('boardSection')),
           React.createElement('p', { style: { color: colors.secondary, fontSize: 13 } },
-            t(webReady() ? 'boardHelpWeb' : 'boardHelp')),
+            t(boardWithoutRecording() ? 'boardHelpOfficial' : webReady() ? 'boardHelpWeb' : 'boardHelp')),
           React.createElement('div', { style: { display: 'flex', alignItems: 'center', flexWrap: 'wrap',
             gap: 12, padding: '14px 0', borderTop: `1px solid ${colors.border}` } },
           React.createElement('span', { style: { minWidth: 150 } }, t('board')),
           React.createElement('kbd', { style: { flex: 1, color: colors.secondary } }, boardBindingText()),
-          React.createElement('button', {
-            ref: boardRecorder, type: 'button',
-            'aria-label': boardRecording ? t('boardRecording') : t('boardRecord'),
-            onClick: () => {
-              if (boardRecording) { setBoardRecording(false); setBoardMessage(t('cancelled')); return; }
-              if (!available || boardBusy) return;
-              setBoardMessage('');
-              setBoardRecordReady(false);
-              setBoardRecording(true);
-            },
-            disabled: !boardRecording && (!available || boardBusy),
-            style: { font: 'inherit', color: boardRecording ? colors.accent : colors.text,
-              background: colors.surface, border: `1px solid ${boardRecording ? colors.accent : colors.border}`,
-              borderRadius: 8, padding: '7px 12px', cursor: 'pointer' },
-          }, boardRecording ? boardRecordReady ? t('boardRecording') : t('preparing') : t('boardRecord')),
+          // 官方壳里不提供录制：录了就会被原生分发接管，手势反而死掉。
+          boardWithoutRecording()
+            ? React.createElement('span', { style: { color: colors.secondary, fontSize: 13 } }, t('boardNoRecord'))
+            : React.createElement('button', {
+              ref: boardRecorder, type: 'button',
+              'aria-label': boardRecording ? t('boardRecording') : t('boardRecord'),
+              onClick: () => {
+                if (boardRecording) { setBoardRecording(false); setBoardMessage(t('cancelled')); return; }
+                if (!available || boardBusy) return;
+                setBoardMessage('');
+                setBoardRecordReady(false);
+                setBoardRecording(true);
+              },
+              disabled: !boardRecording && (!available || boardBusy),
+              style: { font: 'inherit', color: boardRecording ? colors.accent : colors.text,
+                background: colors.surface, border: `1px solid ${boardRecording ? colors.accent : colors.border}`,
+                borderRadius: 8, padding: '7px 12px', cursor: 'pointer' },
+            }, boardRecording ? boardRecordReady ? t('boardRecording') : t('preparing') : t('boardRecord')),
           button(t('clear'), () => void saveBoardBinding(null),
-            !available || boardRecording || boardBusy || !boardStoredRow?.binding)),
+            !available || boardRecording || boardBusy || !boardRecordedRow)),
           boardMessage && React.createElement('p', { role: 'status', style: { color: colors.error } }, boardMessage)),
+        // 录过就必须提示：这时 Alt+Q 是坏状态，点「移除」立刻恢复。
+        boardWithoutRecording() && boardRecordedRow && React.createElement('p', {
+          role: 'alert', style: { color: colors.error, fontSize: 13 } }, t('boardRecorded')),
         message && React.createElement('p', { role: 'status', style: { color: colors.error } }, message));
       }
 

@@ -6,7 +6,7 @@ import { runInNewContext } from 'node:vm';
 const source = await readFile(new URL('../client.js', import.meta.url), 'utf8');
 
 function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform = 'windows', bridge = true, official = false, next = false,
-  settingsRecordingId = null, settingsRecordReady = false } = {}) {
+  settingsRecordingId = null, settingsRecordReady = false, catalogRows = [] } = {}) {
   let plugin;
   const commands = [];
   const slots = [];
@@ -47,7 +47,7 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
     removeEventListener(type, listener) { if (documentListeners.get(type) === listener) documentListeners.delete(type); },
     querySelectorAll() { return [{ dataset: { conversationSession: selected.key }, querySelector() { return scroll; } }]; } };
   const config = { status: 'ready', revision: 'one' };
-  const catalog = [];
+  const catalog = [...catalogRows];
   const stateUpdates = [];
   // 钩子按单次渲染内的调用顺序登记，因此每个注册的组件都有
   // 自己的状态存储与重渲染队列。这样一个组件的状态更新
@@ -1199,4 +1199,30 @@ test('board settings stay out of the ordinary action list', () => {
   assert.equal(select.children[0].length, 15);
   assert.equal(select.children[0].some((option) => option.children[0] === 'board'), false);
   for (const off of environment.disposed.reverse()) off();
+});
+
+test('the official shell offers no board recording and warns about one it finds', () => {
+  // 官方桌面壳里轮切板由文档驱动，录制会把它关掉：
+  // 所以设置页只说明「无需录制」，不摆录制按钮。
+  const shell = load({ mode: null, bridge: false, official: true, runtime: 'desktop' });
+  const settings = shell.slots[0].component();
+  assert.equal(descendants(settings).some((node) => node.props?.['data-kana-board-settings'] !== undefined), true);
+  assert.equal(descendants(settings)
+    .some((node) => node.type === 'button' && node.props['aria-label'] === 'boardRecord'), false);
+  assert.match(JSON.stringify(settings), /boardNoRecord/);
+  assert.doesNotMatch(JSON.stringify(settings), /boardRecorded/);
+  for (const off of shell.disposed.reverse()) off();
+
+  // 已经录过的那种状态必须点出来，因为此时 Alt+Q 是坏的，
+  // 而「移除」是唯一能就地恢复的操作。
+  const recorded = load({ mode: null, bridge: false, official: true, runtime: 'desktop',
+    catalogRows: [{ id: 'kana.shortcuts.session-board', label: 'board', keys: ['Alt+Q'],
+      binding: { code: 'KeyQ', modifiers: ['alt'] }, modified: true, conflicts: [], issue: null }] });
+  const panel = recorded.slots[0].component();
+  const board = descendants(panel).find((node) => node.props?.['data-kana-board-settings'] !== undefined);
+  assert.match(JSON.stringify(panel), /boardRecorded/);
+  // 轮到「移除」必须可点：这是就地恢复 Alt+Q 的唯一按钮。
+  const clear = descendants(board).find((node) => node.type === 'button' && node.children[0] === 'clear');
+  assert.equal(clear.props.disabled, false);
+  for (const off of recorded.disposed.reverse()) off();
 });
