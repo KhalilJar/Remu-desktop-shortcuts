@@ -74,11 +74,9 @@
       "versions": [
         {
           "version": "0.4.17",
-          "publishTimestamp": 1794756098,
+          "publishTimestamp": 1794757062,
           "source": {
-            "type": "git",
-            "url": "https://github.com/KhalilJar/Remu-desktop-shortcuts",
-            "commit": "2284ba68eb647fcb6916535bcccc776e9c31a6c3"
+            "type": "npm"
           },
           "engines": {}
         },
