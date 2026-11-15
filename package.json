@@ -1,10 +1,22 @@
 {
   "name": "kana-desktop-shortcuts",
-  "version": "0.4.13",
-  "private": true,
+  "version": "0.4.14",
   "license": "MIT",
   "type": "module",
   "description": "Keyboard shortcuts for DSH Desktop and DSH Web, including an Alt+Tab style session switcher",
+  "keywords": ["dsh", "dsh-plugin", "shortcuts", "keyboard", "session-switcher", "alt-tab"],
+  "author": "KhalilJar",
+  "homepage": "https://github.com/KhalilJar/Remu-desktop-shortcuts",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/KhalilJar/Remu-desktop-shortcuts.git"
+  },
+  "bugs": {
+    "url": "https://github.com/KhalilJar/Remu-desktop-shortcuts/issues"
+  },
+  "publishConfig": {
+    "registry": "https://registry.npmjs.org"
+  },
   "exports": {
     ".": "./host.js",
     "./client": "./client.js",
