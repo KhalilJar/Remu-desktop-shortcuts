@@ -287,6 +287,49 @@ window.__ModuleLoader__.load({
         if (!known) return keyWatch.altUpAt === upAt;
         return upAt >= keyWatch.lastBaseDownAt;
       };
+      // A browser cannot always prove the gesture ended: the window menu may keep
+      // Alt pressed from the page's point of view, so the base key's own release
+      // commits a moment later. Treating every press as a fresh gesture made
+      // Alt+Q bounce between the same two conversations — the second press
+      // always landed on "the most recent one" again. The tap ring remembers
+      // where the last tap stopped, so pressing again inside the window keeps
+      // walking to the third and fourth conversation the way Alt+Tab does.
+      const tapRing = { ids: [], index: 0, at: 0, expected: null };
+      const tapRingWindowMs = 2500;
+      const resetTapRing = () => {
+        tapRing.ids = [];
+        tapRing.index = 0;
+        tapRing.at = 0;
+        tapRing.expected = null;
+      };
+      // Returns the conversation this tap should open, or null when there is
+      // nothing to switch to. The ring is rebuilt only when the user has moved
+      // somewhere else in the meantime, so its order stays stable across taps.
+      const tapRingStep = () => {
+        const current = currentSessionId();
+        if (!current) return null;
+        const visible = new Set(visibleSessionIds());
+        const now = Date.now();
+        const alive = tapRing.ids.length > 1 && tapRing.expected === current &&
+          now - tapRing.at <= tapRingWindowMs;
+        if (alive) tapRing.ids = tapRing.ids.filter((id) => visible.has(id));
+        else {
+          syncRecent();
+          const merged = [current, ...recentIds];
+          tapRing.ids = merged.filter((id, index) => merged.indexOf(id) === index && visible.has(id));
+        }
+        if (tapRing.ids.length < 2) { resetTapRing(); return null; }
+        const anchor = tapRing.ids.indexOf(current);
+        if (anchor < 0) { resetTapRing(); return null; }
+        // Always step from where the user really is, never from a stale index.
+        tapRing.index = (anchor + 1) % tapRing.ids.length;
+        if (tapRing.ids[tapRing.index] === current && tapRing.ids.length > 1) {
+          tapRing.index = (tapRing.index + 1) % tapRing.ids.length;
+        }
+        tapRing.at = now;
+        tapRing.expected = tapRing.ids[tapRing.index];
+        return tapRing.expected;
+      };
       const boardSubscribe = (listener) => {
         board.listeners.add(listener);
         return () => { board.listeners.delete(listener); };
@@ -348,6 +391,15 @@ window.__ModuleLoader__.load({
       const commitBoard = () => {
         if (board.mode === null) return;
         const target = board.ids[board.index] ?? null;
+        // Hand the next tap its position: releasing Alt ends this gesture, but a
+        // quick press after it should continue through the same cards instead of
+        // restarting on "the most recent one".
+        if (target !== null && board.ids.length > 1) {
+          tapRing.ids = [...board.ids];
+          tapRing.index = board.index;
+          tapRing.expected = target;
+          tapRing.at = Date.now();
+        }
         closeBoard(false);
         if (!target || target === currentSessionId()) return;
         if (!openVisibleSession(target)) boardHint(t('boardGone'));
@@ -552,6 +604,7 @@ window.__ModuleLoader__.load({
         if (event.code === 'Escape') {
           event.preventDefault();
           event.stopPropagation();
+          resetTapRing();
           closeBoard(true);
           return;
         }
@@ -653,7 +706,7 @@ window.__ModuleLoader__.load({
           keyWatch.baseUpAt = 0;
           keyWatch.altUpAt = 0;
           keyWatch.lastBaseDownAt = 0;
-          const target = ids[1] ?? null;
+          const target = (mode === 'transient' ? tapRingStep() : null) ?? ids[1] ?? null;
           if (target !== null && target !== currentSessionId() && !openVisibleSession(target)) {
             boardHint(t('boardGone'));
           }
@@ -662,6 +715,17 @@ window.__ModuleLoader__.load({
         board.mode = mode;
         board.ids = ids;
         board.index = 1;
+        // A tap that follows the previous one continues across the same cards:
+        // without this every press restarts at "most recent", so Alt+Q can only
+        // ever hop between two sessions no matter how often it is tapped.
+        if (mode === 'transient' && tapRing.ids.length > 1 && tapRing.expected === currentSessionId() &&
+          Date.now() - tapRing.at <= tapRingWindowMs) {
+          const target = tapRingStep();
+          if (target !== null) {
+            board.ids = [...tapRing.ids];
+            board.index = tapRing.index;
+          }
+        }
         board.previousFocus = document.activeElement ?? null;
         attachBoardInput();
         startBoardCapture();

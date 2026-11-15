@@ -708,12 +708,31 @@ test('a browser whose menu clears altKey still reads the gesture, and commits wi
   assert.equal(boardOpen(held), true);
   assert.notEqual(selectedIndex(), firstStep);
   // Only letting go of Alt commits.
-  { const opts = descendants(overlaySlot(held).component()).filter((n) => n.props?.role === 'option');
-    console.log('DEBUG sel', opts.findIndex((n) => n.props['aria-selected'] === true), 'of', opts.length); }
   fireWindow(held, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
   assert.equal(held.actions.length, 1);
   assert.equal(boardOpen(held), false);
   for (const off of held.disposed.reverse()) off();
+});
+
+test('a browser whose Alt release is eaten still walks past the newest session on repeated taps', async () => {
+  // The window menu takes the Alt press, so the Q release arrives with altKey
+  // already cleared and no Alt keyup ever follows: every tap has to commit from
+  // its own timer. That is one step per tap, not a jump back to the newest
+  // session — otherwise Alt+Q could only ever toggle between two sessions.
+  const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
+  visitBoard(web, ['s1', 's2', 's3']);
+  web.actions.length = 0;
+  const tap = async () => {
+    fireWindow(web, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
+    fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+    fireWindow(web, 'keyup', keyEvent({ code: 'KeyQ', key: 'q' }));
+    await new Promise((resolve) => setTimeout(resolve, 450));
+  };
+  await tap();
+  await tap();
+  await tap();
+  assert.deepEqual(web.actions, ['open:s2', 'open:s1', 'open:s3']);
+  for (const off of web.disposed.reverse()) off();
 });
 
 test('a browser can swap Ctrl in for the Alt the system menu stole, and it still commits on release', () => {
