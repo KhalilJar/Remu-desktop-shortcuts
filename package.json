@@ -1,10 +1,17 @@
 {
   "name": "kana-desktop-shortcuts",
-  "version": "0.4.14",
+  "version": "0.4.15",
   "license": "MIT",
   "type": "module",
   "description": "Keyboard shortcuts for DSH Desktop and DSH Web, including an Alt+Tab style session switcher",
-  "keywords": ["dsh", "dsh-plugin", "shortcuts", "keyboard", "session-switcher", "alt-tab"],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "shortcuts",
+    "keyboard",
+    "session-switcher",
+    "alt-tab"
+  ],
   "author": "KhalilJar",
   "homepage": "https://github.com/KhalilJar/Remu-desktop-shortcuts",
   "repository": {
@@ -23,9 +30,18 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
-  "files": ["host.js", "client.js", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md"],
+  "files": [
+    "host.js",
+    "client.js",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md"
+  ],
   "dsh": {
-    "bundle": { "patch": "./cordis.patch.yml" },
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    },
     "client": {
       "platform": "web",
       "immediately": true,

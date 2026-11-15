@@ -159,10 +159,17 @@ window.__ModuleLoader__.load({
       // 吃掉 Alt 抬起，除非由 `setIgnoreMenuShortcuts` 接管。
       // 普通浏览器没有这样的菜单：抬起信号会自行到达文档，
       // 所以即使缺少 `recording`，Web 也需要轮切板。
+      // 官方桌面壳（`dsh-app://`）既不提供社区版那套桥接，也不一定
+      // 暴露 NEXT 的桌面通道；可它的内容页同样是普通渲染进程，
+      // 按键照常送达到文档。所以当两条原生通道都不在时，
+      // 官方壳与纯 Web 一样，改由文档自己驱动轮切板手势。
+      // 原生通道在场时绝不走这条路：那会把一次按下处理两遍。
+      const documentGesture = () => !nextDeveloperReady() && !desktopReady() &&
+        (webReady() || officialReady());
       const switcherReady = () => (
         (nextDeveloperReady() || desktopReady()) &&
           ctx.shortcuts.platform === 'windows' && typeof ctx.shortcuts.recording === 'function'
-      ) || (webReady() && ctx.shortcuts.platform === 'windows');
+      ) || (documentGesture() && ctx.shortcuts.platform === 'windows');
 
       // DSH 负责键盘分发、冲突检查和存储。保留原有动作 ID，
       // 这样各运行时已保存的偏好设置不受影响。
@@ -481,10 +488,10 @@ window.__ModuleLoader__.load({
       // 永远不必硬编码用户可能重新录制过的按键。
       const boardBaseBinding = () => {
         try {
-          // 在 Web 上这一行是“无法保存”而非“为空”，而若让它
-          // 因此禁用手势，正是那里单独的 Alt+Q 毫无反应的原因：
+          // 在 Web 与官方桌面壳里这一行是“无法保存”而非“为空”，
+          // 而若让它因此禁用手势，正是那里单独的 Alt+Q 毫无反应的原因：
           // 改为从已保存的字母推导出纯 Alt 绑定。
-          if (webReady()) return { code: webBoardCode(), modifiers: ['alt'] };
+          if (documentGesture()) return { code: webBoardCode(), modifiers: ['alt'] };
           return ctx.shortcuts.catalog.getSnapshot()
             .find((row) => row.id === boardIds[0])?.binding ?? null;
         } catch (error) {
@@ -557,6 +564,9 @@ window.__ModuleLoader__.load({
         // 按下时，用户是在用普通的 Ctrl+Alt 快捷键
         // （`Ctrl+Alt+D` 之类），这些必须继续流向 DSH。
         if (event?.ctrlKey || event?.metaKey) return;
+        // 文档自己读取手势的运行时里没有窗口菜单可对抗，
+        // 预置只会让同一次按下被处理两遍。
+        if (documentGesture()) return;
         // 预置只为了对抗 Electron 窗口菜单。浏览器
         // 没有这样的菜单，会继续分发，所以在那里预置会把
         // 手势跑两遍——先经这条路径打开，然后再经
@@ -571,9 +581,9 @@ window.__ModuleLoader__.load({
       // 自行移动：录制的基础键向前步进，Shift 则反向。
       const boardMoves = (event) => {
         if (!board.captureActive) return false;
-        // 在 Web 上文档监听器已经读取了手势，若在这里
-        // 再步进一次，一次点按就会移动两张卡片。
-        if (webReady()) return false;
+        // 在 Web 和官方桌面壳里文档监听器已经读取了手势，
+        // 若在这里再步进一次，一次点按就会移动两张卡片。
+        if (documentGesture()) return false;
         const binding = boardBaseBinding();
         if (!binding || binding.secondCode || event.code !== binding.code) return false;
         const modifiers = binding.modifiers ?? [];
@@ -593,7 +603,7 @@ window.__ModuleLoader__.load({
         // 永远不会到达；取消是唯一不会误触的结果。浏览器路径
         // 接受我们看到的那次 Alt 按下视为仍被按住，因为
         // Windows 可能在修饰键已被清除的情况下送来随后的按键。
-        const altGesture = event.altKey || (webReady() && keyWatch.altDownAt !== 0
+        const altGesture = event.altKey || (documentGesture() && keyWatch.altDownAt !== 0
           && Date.now() - keyWatch.altDownAt <= 1500);
         if (board.mode === 'transient' && !altKey && !altGesture) {
           closeBoard(true);
@@ -634,7 +644,7 @@ window.__ModuleLoader__.load({
         // 抬起是我们确实能拿到的信号，所以它像 Alt+Tab 一样提交。
         // 只有桌面壳路径需要这个兜底：浏览器从不捕获，
         // 因此它的基础键抬起表示“再走一步”，而非“提交”。
-        if (!board.captureActive && !webReady()) {
+        if (!board.captureActive && !documentGesture()) {
           const binding = boardBaseBinding();
           if (binding !== null && !binding.secondCode && event.code === binding.code) {
             event.preventDefault();
@@ -642,7 +652,7 @@ window.__ModuleLoader__.load({
             return;
           }
         }
-        if (webReady()) {
+        if (documentGesture()) {
           const binding = boardBaseBinding();
           if (binding !== null && !binding.secondCode && event.code === binding.code) {
             // Alt 仍按着意味着这是一次点按的结束，而不是
@@ -663,7 +673,7 @@ window.__ModuleLoader__.load({
         // 浏览器可能用 Ctrl 顶替被系统抢走的 Alt，
         // 所以这两个修饰键中任意一个松开都会结束那里的手势。
         const altRelease = event.code === 'AltLeft' || event.code === 'AltRight' || event.key === 'Alt';
-        const ctrlRelease = webReady()
+        const ctrlRelease = documentGesture()
           && (event.code === 'ControlLeft' || event.code === 'ControlRight' || event.key === 'Control');
         if (!altRelease && !ctrlRelease) return;
         if (webCommitTimer !== 0 && typeof clearTimeout === 'function') {
@@ -821,7 +831,7 @@ window.__ModuleLoader__.load({
             // 在 Web 上该文档已经用自己的 keydown 监听器打开了
             // 或步进了轮切板；若再让分发执行一次，
             // 一次按下会让高亮移动两次。
-            if (webReady()) return { status: 'handled', run: () => {} };
+            if (documentGesture()) return { status: 'handled', run: () => {} };
             if (!switcherReady() || !pageReady() || !document.hasFocus() || context?.modal !== null) {
               return { status: 'blocked', reason: 'board-unavailable' };
             }
@@ -838,14 +848,14 @@ window.__ModuleLoader__.load({
           } },
         { id: boardIds[1], key: 'boardBack', board: true, regions: ['page', 'editable', 'terminal'],
           resolve: (context) => {
-            if (webReady()) return { status: 'handled', run: () => {} };
+            if (documentGesture()) return { status: 'handled', run: () => {} };
             if (!switcherReady() || !pageReady() || !document.hasFocus() || context?.modal !== null ||
                 board.mode === null) return { status: 'blocked', reason: 'board-closed' };
             return { status: 'handled', run: () => moveBoard(-1) };
           } },
         { id: boardIds[2], key: 'boardPin', board: true, regions: ['page', 'editable', 'terminal'],
           resolve: (context) => {
-            if (webReady()) return { status: 'handled', run: () => {} };
+            if (documentGesture()) return { status: 'handled', run: () => {} };
             if (!switcherReady() || !pageReady() || !document.hasFocus() || context?.modal !== null) {
               return { status: 'blocked', reason: 'board-unavailable' };
             }
@@ -1452,7 +1462,7 @@ window.__ModuleLoader__.load({
           // 在自己的保存路径上拒绝纯 Alt 绑定，因此手势可能
           // 永远不会被分发到。同样改为从该文档驱动轮切板：
           // 按键仍是用户录制的那一组，只是读取早了一层。
-          if (webReady() && switcherReady()) {
+          if (documentGesture() && switcherReady()) {
             // Windows 会把单独的 Alt 按下交给窗口菜单，所以随后
             // 的 Q 到达时 altKey 可能已被清除。我们确实看到的
             // 那次 Alt 按下因此也被接受为手势的开始。

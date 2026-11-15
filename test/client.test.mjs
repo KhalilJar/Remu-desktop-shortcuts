@@ -278,7 +278,9 @@ test('dedicated page clears and resets only its own action through revision-awar
 
 test('official Desktop registers native-compatible actions, while plain Web registers the shell-free ones', () => {
   const official = load({ mode: null, bridge: false, official: true, runtime: 'desktop' });
-  assert.equal(official.commands.length, 14);
+  // 官方桌面壳没有原生通道时也能承载轮切板，所以除 DevTools 之外的
+  // 17 个动作全部就位（18 - DevTools）。
+  assert.equal(official.commands.length, 17);
   assert.equal(official.commands.some((command) => command.id === 'kana.shortcuts.devtools'), false);
   assert.equal(official.slots[0].component().type, 'section');
   official.commands[0].resolve({ modal: null }).run();
@@ -655,6 +657,44 @@ test('session board is offered on the community and NEXT Windows shells and on p
   assert.deepEqual(environment.actions, ['open:s2']);
   assert.equal(boardOpen(environment), false);
   for (const off of environment.disposed.reverse()) off();
+});
+
+test('official desktop shell without a native channel drives the board from the document', () => {
+  // 官方壳的内容页同样是普通渲染进程：不走社区版桥接，
+  // 也不一定有 NEXT 的桌面通道。手势因此和 Web 一样
+  // 从文档读取，而不是靠原生分发。
+  const official = load({ mode: null, bridge: false, official: true, runtime: 'desktop' });
+  assert.ok(overlaySlot(official), '轮切板插槽应当挂上');
+  assert.equal(official.commands.some((command) => command.id === 'kana.shortcuts.session-board'), true);
+  // 官方壳里纯 Alt 组合存不进目录，手势反过来从保存的字母推导。
+  visitBoard(official, ['s2', 's3', 's1']);
+  official.actions.length = 0;
+  // 高亮卡就是提交目标，因此断言只跟随它，不假设排序。
+  const highlighted = () => cardsOf(boardNode(official))
+    .find((node) => node.props['aria-selected'] === true)?.props.key;
+  fireWindow(official, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
+  fireWindow(official, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+  assert.equal(boardNode(official).props['data-kana-session-board'], 'transient');
+  // 同一次按下若也抵达 DSH 分发，绝不能再步进一次。
+  const duplicate = boardCommand(official).resolve({ modal: null });
+  assert.equal(duplicate.status, 'handled');
+  duplicate.run();
+  fireWindow(official, 'keyup', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+  assert.deepEqual(official.actions, []);
+  const first = highlighted();
+  assert.ok(first);
+  fireWindow(official, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
+  assert.deepEqual(official.actions, [`open:${first}`]);
+  // 第二次点按沿同一组卡片继续，而不是回到最近的那个会话。
+  official.actions.length = 0;
+  fireWindow(official, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
+  fireWindow(official, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+  fireWindow(official, 'keyup', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+  const second = highlighted();
+  fireWindow(official, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
+  assert.notEqual(second, first);
+  assert.deepEqual(official.actions, [`open:${second}`]);
+  for (const off of official.disposed.reverse()) off();
 });
 
 test('a browser whose menu clears altKey still reads the gesture, and commits without the Alt release', async () => {
