@@ -304,15 +304,19 @@ window.__ModuleLoader__.load({
         if (!known) return keyWatch.altUpAt === upAt;
         return upAt >= keyWatch.lastBaseDownAt;
       };
-      // 浏览器并不总能证明手势已结束：从页面的角度看，窗口菜单
-      // 可能一直按着 Alt，所以基础键自身的抬起会在片刻之后提交。
-      // 若把每次按下都当作新手势，Alt+Q 就会在同一对会话之间
-      // 来回跳——第二次按下总是又落在“最近的那个”上。
-      // 点击环会记住上一次点按停在哪里，因此在时间窗内再次
-      // 按下会继续走到第三个、第四个会话，
-      // 就像 Alt+Tab 那样。
+      // 手势可能在不该结束的时候结束：浏览器里窗口菜单会抢走 Alt，
+      // 页面上只看得到基础键的抬起，于是每次点按都提交一次。
+      // 若把每次按下都当成新手势，Alt+Q 就会在同一对会话之间
+      // 来回跳——第二次按下总是又落在「最近的那个」上。
+      // 所以这里留住上一次点按停下的位置，让紧随其后的按下
+      // 继续往后走到第三、第四个会话，就像 Alt+Tab 那样。
+      // 留住的只是「走到哪一步」，卡片顺序永远按使用情况重排。
       const tapRing = { ids: [], index: 0, at: 0, expected: null };
       const tapRingWindowMs = 2500;
+      // 只有真的收不到 Alt 抬起的环境才需要跨点按延续；
+      // 一旦观察到过 Alt 的抬起，就说明这个环境收得到，
+      // 每次松手都是一次完整手势，必须重新从「最近的那个」开始。
+      let altReleaseSeen = false;
       const resetTapRing = () => {
         tapRing.ids = [];
         tapRing.index = 0;
@@ -320,8 +324,8 @@ window.__ModuleLoader__.load({
         tapRing.expected = null;
       };
       // 返回本次点按应当打开的会话；没有可切换的目标时返回 null。
-      // 只有当用户在此期间去了别处时才重建环，
-      // 所以它的顺序在多次点按之间保持稳定。
+      // 延续期间只过滤已经不可见的会话，不重排顺序——
+      // 重排会让「下一步」跟着漂移。
       const tapRingStep = () => {
         const current = currentSessionId();
         if (!current) return null;
@@ -405,17 +409,23 @@ window.__ModuleLoader__.load({
         board.index = ((board.index + delta) % total + total) % total;
         publishBoard();
       };
-      const commitBoard = () => {
+      const commitBoard = (keepRing = false) => {
         if (board.mode === null) return;
         const target = board.ids[board.index] ?? null;
-        // 把位置交给下一次点按：松开 Alt 结束本次手势，
-        // 但紧随其后的一次快速按下应沿着同一组卡片继续，
-        // 而不是从“最近的那个”重新开始。
-        if (target !== null && board.ids.length > 1) {
-          tapRing.ids = [...board.ids];
-          tapRing.index = board.index;
+        // 正常的一次松手就是一次完整手势，位置必须清掉：
+        // 下一次按下会从「最近的那个」重新开始，和 Alt+Tab 一样。
+        // 只有环境压根收不到 Alt 抬起时才把位置交给下一次点按。
+        if (keepRing && !altReleaseSeen && target !== null && board.ids.length > 1) {
+          // 已经在环上走到的位置就原样保留：环的顺序是手势开始时
+          // 定下的，用展示顺序覆盖它会让「下一步」跟着漂移。
+          if (target !== tapRing.expected || tapRing.ids.length < 2) {
+            tapRing.ids = [...board.ids];
+            tapRing.index = board.index;
+          }
           tapRing.expected = target;
           tapRing.at = Date.now();
+        } else {
+          resetTapRing();
         }
         closeBoard(false);
         if (!target || target === currentSessionId()) return;
@@ -660,7 +670,7 @@ window.__ModuleLoader__.load({
           const binding = boardBaseBinding();
           if (binding !== null && !binding.secondCode && event.code === binding.code) {
             event.preventDefault();
-            commitBoard();
+            commitBoard(true);
             return;
           }
         }
@@ -676,7 +686,7 @@ window.__ModuleLoader__.load({
             if (webCommitTimer === 0 && typeof setTimeout === 'function') {
               webCommitTimer = setTimeout(() => {
                 webCommitTimer = 0;
-                commitBoard();
+                commitBoard(true);
               }, 400);
             }
             return;
@@ -688,6 +698,8 @@ window.__ModuleLoader__.load({
         const ctrlRelease = documentGesture()
           && (event.code === 'ControlLeft' || event.code === 'ControlRight' || event.key === 'Control');
         if (!altRelease && !ctrlRelease) return;
+        // 从这里开始可以确认：这个环境收得到修饰键的抬起。
+        altReleaseSeen = true;
         if (webCommitTimer !== 0 && typeof clearTimeout === 'function') {
           clearTimeout(webCommitTimer);
           webCommitTimer = 0;
@@ -738,13 +750,14 @@ window.__ModuleLoader__.load({
         // 紧接上一次的点按会沿着同一组卡片继续：
         // 否则每次按下都从“最近”重新开始，Alt+Q 无论点按多少次
         // 都只能在两个会话之间来回跳。
-        if (mode === 'transient' && tapRing.ids.length > 1 && tapRing.expected === currentSessionId() &&
+        if (mode === 'transient' && !altReleaseSeen && tapRing.ids.length > 1 &&
+          tapRing.expected === currentSessionId() &&
           Date.now() - tapRing.at <= tapRingWindowMs) {
           const target = tapRingStep();
-          if (target !== null) {
-            board.ids = [...tapRing.ids];
-            board.index = tapRing.index;
-          }
+          // 卡片始终按「当前会话 + 最近使用」展示，续的只是位置：
+          // 高亮必须落在继续走到的那个会话上，而不是旧顺序里的同一格。
+          const at = target === null ? -1 : board.ids.indexOf(target);
+          if (at > 0) board.index = at;
         }
         board.previousFocus = document.activeElement ?? null;
         attachBoardInput();

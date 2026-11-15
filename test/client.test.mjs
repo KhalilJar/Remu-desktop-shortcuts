@@ -685,16 +685,44 @@ test('official desktop shell without a native channel drives the board from the 
   assert.ok(first);
   fireWindow(official, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
   assert.deepEqual(official.actions, [`open:${first}`]);
-  // 第二次点按沿同一组卡片继续，而不是回到最近的那个会话。
+  // 松手就是一次完整手势：下一次按下必须重新从「最近的那个」开始，
+  // 像 Alt+Tab 一样在两个最近的会话之间来回，而不是一路往后走。
   official.actions.length = 0;
   fireWindow(official, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
   fireWindow(official, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
-  fireWindow(official, 'keyup', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+  // 第一张卡永远是用户此刻所在的会话，顺序按使用情况重排。
+  assert.equal(cardsOf(boardNode(official))[0].props.key, first);
   const second = highlighted();
+  fireWindow(official, 'keyup', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
   fireWindow(official, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
-  assert.notEqual(second, first);
+  assert.equal(second, 's1');
   assert.deepEqual(official.actions, [`open:${second}`]);
   for (const off of official.disposed.reverse()) off();
+});
+
+test('every gesture of the official shell restarts at the most recent session', () => {
+  // 用户反馈：会话顺序被冻结、高亮接着上一次往后跑。
+  // 一次按住 Alt 是一次手势；松手之后必须从头再来。
+  const shell = load({ mode: null, bridge: false, official: true, runtime: 'desktop' });
+  visitBoard(shell, ['s1', 's2', 's3']);
+  shell.actions.length = 0;
+  const tap = () => {
+    fireWindow(shell, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
+    fireWindow(shell, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+    const cards = cardsOf(boardNode(shell));
+    // 第一张卡是当前会话，高亮永远落在第二张：那里是最近用过的另一个。
+    assert.equal(cards[0].props.key, shell.selected.key);
+    assert.equal(cards[1].props['aria-selected'], true);
+    const target = cards[1].props.key;
+    fireWindow(shell, 'keyup', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
+    fireWindow(shell, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
+    return target;
+  };
+  assert.equal(tap(), 's2');
+  assert.equal(tap(), 's3');
+  assert.equal(tap(), 's2');
+  assert.deepEqual(shell.actions, ['open:s2', 'open:s3', 'open:s2']);
+  for (const off of shell.disposed.reverse()) off();
 });
 
 test('a browser whose menu clears altKey still reads the gesture, and commits without the Alt release', async () => {
