@@ -1,5 +1,5 @@
-// Desktop-content shortcuts and a dedicated DSH Settings section.
-// The built-in shortcuts service owns dispatch, conflict checks, recording pause and persistence.
+// 桌面内容页快捷键，以及独立的 DSH 设置分区。
+// 按键分发、冲突检查、录制暂停与持久化均由内置快捷键服务负责。
 window.__ModuleLoader__.load({
   id: 'kana-desktop-shortcuts',
   factory: (require) => ({
@@ -12,14 +12,14 @@ window.__ModuleLoader__.load({
         'kana.shortcuts.devtools', 'kana.shortcuts.conversation', 'kana.shortcuts.focus-composer',
         'kana.shortcuts.focus-content', 'kana.shortcuts.recent-session', 'kana.shortcuts.previous-session',
       ];
-      // One user-recorded base combination and its two derived companions.
+      // 一个由用户录制的基础组合键，以及由它派生的两个配套组合。
       const boardIds = [
         'kana.shortcuts.session-board', 'kana.shortcuts.session-board-back',
         'kana.shortcuts.session-board-pin',
       ];
-      // Sessions the user removed from this launch's board candidates. The
-      // current session is never removed here, and revisiting a removed session
-      // puts it back (syncRecent clears the entry once it becomes current).
+      // 本次启动中被用户从轮切板候选中移除的会话。当前会话永远不会
+      // 在这里被移除，而重新访问一个被移除的会话会把它放回来
+      // （syncRecent 会在它成为当前会话后清除该条目）。
       const boardRemovedIds = new Set();
       const colors = {
         text: 'var(--dsw-alias-label-primary)', secondary: 'var(--dsw-alias-label-secondary)',
@@ -121,58 +121,58 @@ window.__ModuleLoader__.load({
       const desktopMode = () => {
         const marked = document.body?.dataset.dshDesktopMode;
         if (marked !== undefined) return marked;
-        // Compatibility keeps the upstream root and never writes the body mode
-        // marker. Only accept its URL marker when Electron's preload bridge is
-        // present; a normal browser cannot impersonate a Desktop content view.
+        // 兼容模式沿用上游根路径，从不写入 body 上的模式标记。
+        // 只有在 Electron 的预加载桥接存在时，才接受它的 URL 标记；
+        // 普通浏览器无法冒充桌面内容页。
         return bridgeReady() && urlMode() === 'compatibility' ? 'compatibility' : undefined;
       };
       const desktopReady = () => bridgeReady() && desktopModes.includes(desktopMode());
       const nextDeveloperReady = () => officialReady() && typeof globalThis.desktopNext?.command === 'function';
       const devtoolsReady = () => desktopReady() || nextDeveloperReady();
-      // Plain DSH Web (a browser pointed at a server) has no preload bridge, so
-      // every desktop-only helper above stays false. The shortcuts service
-      // still dispatches keys there, and the session/composer actions are pure
-      // client state, so those work unchanged — only the capabilities that need
-      // the shell (DevTools, fixed panel digits, menu-shortcut capture) stay off.
-      // Deliberately keyed on the missing bridge rather than on an unrecognised
-      // Desktop mode: a Desktop shell in an unknown mode must stay inactive
-      // instead of quietly degrading to Web behaviour.
+      // 纯 DSH Web（浏览器直接连服务器）没有预加载桥接，所以上面每个
+      // 仅限桌面的辅助判断都为 false。快捷键服务在这里仍会分发按键，
+      // 而会话、输入框相关的动作是纯客户端状态，因此照常可用——
+      // 只有需要桌面壳的能力（开发者工具、固定的功能页数字键、
+      // 菜单快捷键捕获）保持关闭。这里刻意以“桥接缺失”为判据，
+      // 而不是以“无法识别的桌面模式”为判据：处于未知模式的
+      // 桌面壳必须保持不生效，
+      // 而不是悄悄退化成 Web 的行为。
       const webReady = () => !officialReady() && !bridgeReady() && typeof window !== 'undefined';
       const pageReady = () => officialReady() || desktopReady() || webReady();
       const fixedPanelAvailable = () => desktopReady() && ctx.shortcuts.platform === 'windows';
       const webPanelAvailable = () => webReady() && ctx.shortcuts.platform === 'windows';
-      // A browser keeps Ctrl+digit for its own tabs, so the Web build shifts the
-      // same idea one modifier over instead of pretending the combination works.
+      // 浏览器会把 Ctrl+数字 留给自己的标签页，所以 Web 版把同样的思路
+      // 挪到多一个修饰键上，而不是假装那个组合能用。
       const panelPrefix = (digit) => webPanelAvailable()
         ? `Ctrl + Alt + ${digit}`
         : fixedPanelAvailable() ? `Ctrl + ${digit}` : `${digit}`;
-      // The board commits on the Alt keyup, which is only observable while the
-      // shell stops consuming that release itself: on Windows the window menu
-      // eats the Alt keyup. Both shells implement the same pair — the client's
-      // `shortcuts.recording` and the main process's `setIgnoreMenuShortcuts`
-      // — and both swallow the base keyup under the same `consumed === "press"`
-      // condition (verified against the community `lib/main.js`), so either
-      // shell can host the board. The community shell reports `runtime: "web"`
-      // because it renders in a web content view, which is why the runtime is
-      // no longer part of this gate. Plain Web has no such bridge and keeps the
-      // old actions untouched.
-      // The shell gate above applies to Electron content views, where the window
-      // menu eats the Alt release unless `setIgnoreMenuShortcuts` takes over. A
-      // plain browser has no such menu: the release reaches the document by
-      // itself, so Web needs the board even though `recording` is absent.
+      // 轮切板在 Alt 抬起时提交，而只有当桌面壳自己不再吞掉那次抬起时，
+      // 这个时机才可观测：在 Windows 上窗口菜单会吃掉 Alt 的抬起。
+      // 两种桌面壳都实现了同一对开关——客户端的 `shortcuts.recording`
+      // 与主进程的 `setIgnoreMenuShortcuts`——并且都在相同的
+      // `consumed === "press"` 条件下吞掉基础键的抬起
+      // （已对照社区版 `lib/main.js` 核实），所以任一桌面壳
+      // 都能承载轮切板。社区版桌面壳上报 `runtime: "web"`，
+      // 因为它在 web 内容视图中渲染，这也是 runtime 不再
+      // 参与此判断条件的原因。纯 Web 没有这样的桥接，
+      // 因而保持旧动作不变。
+      // 上面的桌面壳判断针对 Electron 内容视图：那里的窗口菜单会
+      // 吃掉 Alt 抬起，除非由 `setIgnoreMenuShortcuts` 接管。
+      // 普通浏览器没有这样的菜单：抬起信号会自行到达文档，
+      // 所以即使缺少 `recording`，Web 也需要轮切板。
       const switcherReady = () => (
         (nextDeveloperReady() || desktopReady()) &&
           ctx.shortcuts.platform === 'windows' && typeof ctx.shortcuts.recording === 'function'
       ) || (webReady() && ctx.shortcuts.platform === 'windows');
 
-      // DSH owns keyboard dispatch, conflict checks and storage. Keep original
-      // action IDs so each runtime's saved preferences remain untouched.
-      // Official Desktop and DSH NEXT use native adapters; community Stable 2.0.18
-      // identified as web:windows with its own renderer storage partition.
+      // DSH 负责键盘分发、冲突检查和存储。保留原有动作 ID，
+      // 这样各运行时已保存的偏好设置不受影响。
+      // 官方 Desktop 与 DSH NEXT 使用原生适配器；社区版 Stable 2.0.18
+      // 被识别为 web:windows，并使用自己的渲染进程存储分区。
       const currentSessionId = () => ctx.uiSession.adapter.current.getSnapshot().key;
       const currentSession = () => ctx.sessions.list.getSnapshot().byId[currentSessionId()];
-      // Match the sidebar's ordinary visible Sessions; never open an archive,
-      // subagent child, stale local fallback, or another unstarted blank draft.
+      // 与侧边栏中普通可见的会话保持一致；绝不打开归档会话、
+      // 子代理子会话、过期的本地回退项，或另一个尚未启动的空白草稿。
       const visibleSessionIds = () => {
         const list = ctx.sessions.list.getSnapshot();
         const workspaces = ctx.workspaces.list.getSnapshot();
@@ -192,8 +192,8 @@ window.__ModuleLoader__.load({
         recentIds = recentIds.filter((id) => allowed.has(id));
         if (cycle && cycle.ids.some((id) => !allowed.has(id))) cycle = null;
         const id = currentSessionId();
-        // Revisiting a session that the board dropped puts it back in the
-        // candidate list; re-rendering the same page never does.
+        // 重新访问被轮切板移除的会话会把它放回候选列表；
+        // 仅仅重绘同一个页面则不会。
         if (id) boardRemovedIds.delete(id);
         if (id === observedId && (!id || recentIds.includes(id))) return;
         if (id && allowed.has(id)) {
@@ -239,15 +239,15 @@ window.__ModuleLoader__.load({
         cycle = null;
         if (current && previous) openVisibleSession(previous);
       };
-      // ── Session board ──────────────────────────────────────────────────
-      // NEXT Windows only. The native bridge forwards keydown and never the
-      // release, so a transient board can commit only while this document still
-      // receives the Alt keyup: the main process lets modifier keyup through and
-      // the board keeps the main frame focused. A trigger that came from an
-      // embedded frame cannot observe the release, so the board refuses to open
-      // instead of guessing with a timer.
-      // Shape limits of the switcher rectangle: five cards per row, three rows
-      // on screen before the list starts scrolling vertically.
+      // ── 会话轮切板 ─────────────────────────────────────────────────────
+      // 仅限 NEXT Windows。原生桥接只转发 keydown、从不转发抬起，
+      // 所以临时板只有在该文档仍能收到 Alt 抬起时才能提交：
+      // 主进程放行修饰键的抬起，轮切板则让主框架保持焦点。
+      // 来自内嵌框架的触发观测不到这次抬起；
+      // 因此轮切板宁可拒绝打开，
+      // 也不靠定时器去猜。
+      // 切换器矩形的尺寸上限：每行五张卡片，
+      // 屏幕上先显示三行，之后列表才开始纵向滚动。
       const boardMaxColumns = 5;
       const boardMaxRows = 3;
       const boardCardHeight = 92;
@@ -255,29 +255,29 @@ window.__ModuleLoader__.load({
         mode: null, ids: [], index: 0, hint: '', hintTimer: null,
         snapshot: { mode: null, index: 0, cards: [], hint: '' },
         listeners: new Set(), detach: null, previousFocus: null,
-        // Capture states: `pending` while the bridge confirms the request,
-        // `active` once the window menu really stopped eating the Alt release.
+        // 捕获状态：桥接确认请求期间为 `pending`，
+        // 窗口菜单真正不再吞掉 Alt 抬起后为 `active`。
         capturePending: false, captureActive: false,
       };
-      // The native dispatcher reaches this document through an IPC round trip, so
-      // a fast tap can finish releasing both keys before the board is created.
-      // The dispatcher consumes the base key's own release, but the Alt release
-      // still reaches the page, so both are recorded for the whole session and the
-      // board can tell that the tap already finished.
+      // 原生分发器通过一次 IPC 往返才到达该文档，
+      // 因此一次快速点按可能在轮切板创建之前就已松开两个键。
+      // 分发器会消费基础键自身的抬起，但 Alt 的抬起仍会到达页面，
+      // 所以整轮会话都记录这两者，轮切板
+      // 便能判断这次点按已经结束。
       const keyWatch = { baseUpAt: 0, altUpAt: 0, lastBaseDownAt: 0, altDownAt: 0 };
-      // A browser may never deliver the Alt release (Windows gives a bare Alt to
-      // the window menu), so the board also commits a moment after the base key
-      // is let go. The timer is cancelled the instant the real release arrives.
+      // 浏览器可能永远不会送来 Alt 抬起（Windows 会把单独的 Alt 交给
+      // 窗口菜单），所以轮切板也会在基础键松开后稍等片刻再提交。
+      // 真正的抬起一到，该定时器就立即取消。
       let webCommitTimer = 0;
-      // A "tap" is a press and release that finished before the command arrived.
-      // The two shells report differently: the community shell resolves the
-      // shortcut inside the renderer, so this document sees the whole gesture,
-      // while DSH NEXT resolves it in the main process, which calls
-      // `preventDefault()` on the matched keydown and then round-trips through
-      // IPC. There the base keydown never reaches the page, and the only trace
-      // of the finished tap is the Alt release. Keep the window tight for that
-      // blind path: the IPC round trip is milliseconds, so a release older than
-      // the window means Alt is still held and the board must really open.
+      // “点按”指在命令到达之前就已完成的一次按下与松开。
+      // 两种桌面壳的上报方式不同：社区版在渲染进程内解析快捷键，
+      // 因此该文档能看到整个手势；而 DSH NEXT 在主进程中解析，
+      // 它会对匹配到的 keydown 调用 `preventDefault()`，然后
+      // 经由 IPC 往返。在那里基础键的 keydown 根本到不了页面，
+      // 这次已完成的点按唯一留下的痕迹就是 Alt 抬起。对这条
+      // 盲路径要把时间窗收得很紧：IPC 往返只有几毫秒，
+      // 所以比时间窗更早的抬起意味着 Alt 仍被按住，
+      // 轮切板必须真正打开。
       const tapAlreadyReleased = () => {
         const upAt = Math.max(keyWatch.baseUpAt, keyWatch.altUpAt);
         if (upAt === 0) return false;
@@ -287,13 +287,13 @@ window.__ModuleLoader__.load({
         if (!known) return keyWatch.altUpAt === upAt;
         return upAt >= keyWatch.lastBaseDownAt;
       };
-      // A browser cannot always prove the gesture ended: the window menu may keep
-      // Alt pressed from the page's point of view, so the base key's own release
-      // commits a moment later. Treating every press as a fresh gesture made
-      // Alt+Q bounce between the same two conversations — the second press
-      // always landed on "the most recent one" again. The tap ring remembers
-      // where the last tap stopped, so pressing again inside the window keeps
-      // walking to the third and fourth conversation the way Alt+Tab does.
+      // 浏览器并不总能证明手势已结束：从页面的角度看，窗口菜单
+      // 可能一直按着 Alt，所以基础键自身的抬起会在片刻之后提交。
+      // 若把每次按下都当作新手势，Alt+Q 就会在同一对会话之间
+      // 来回跳——第二次按下总是又落在“最近的那个”上。
+      // 点击环会记住上一次点按停在哪里，因此在时间窗内再次
+      // 按下会继续走到第三个、第四个会话，
+      // 就像 Alt+Tab 那样。
       const tapRing = { ids: [], index: 0, at: 0, expected: null };
       const tapRingWindowMs = 2500;
       const resetTapRing = () => {
@@ -302,9 +302,9 @@ window.__ModuleLoader__.load({
         tapRing.at = 0;
         tapRing.expected = null;
       };
-      // Returns the conversation this tap should open, or null when there is
-      // nothing to switch to. The ring is rebuilt only when the user has moved
-      // somewhere else in the meantime, so its order stays stable across taps.
+      // 返回本次点按应当打开的会话；没有可切换的目标时返回 null。
+      // 只有当用户在此期间去了别处时才重建环，
+      // 所以它的顺序在多次点按之间保持稳定。
       const tapRingStep = () => {
         const current = currentSessionId();
         if (!current) return null;
@@ -321,7 +321,7 @@ window.__ModuleLoader__.load({
         if (tapRing.ids.length < 2) { resetTapRing(); return null; }
         const anchor = tapRing.ids.indexOf(current);
         if (anchor < 0) { resetTapRing(); return null; }
-        // Always step from where the user really is, never from a stale index.
+        // 始终从用户真实所在的位置开始步进，绝不使用过期的索引。
         tapRing.index = (anchor + 1) % tapRing.ids.length;
         if (tapRing.ids[tapRing.index] === current && tapRing.ids.length > 1) {
           tapRing.index = (tapRing.index + 1) % tapRing.ids.length;
@@ -361,7 +361,7 @@ window.__ModuleLoader__.load({
       const boardHint = (message) => {
         board.hint = message;
         publishBoard();
-        // The vm-based tests have no timers; a lingering hint is harmless there.
+        // 基于 vm 的测试没有定时器；残留的提示在那里无伤大雅。
         if (typeof setTimeout !== 'function') return;
         if (board.hintTimer !== null) clearTimeout(board.hintTimer);
         board.hintTimer = setTimeout(() => {
@@ -381,8 +381,8 @@ window.__ModuleLoader__.load({
       };
       const moveBoard = (delta) => {
         if (board.mode === null) return;
-        // The ring covers every card, including the conversation the user is in
-        // right now, so a long enough run brings them back like Alt+Tab does.
+        // 环覆盖所有卡片，包括用户当前所在的会话，
+        // 所以走得足够远就会像 Alt+Tab 一样回到这里。
         const total = board.ids.length;
         if (total < 2) return;
         board.index = ((board.index + delta) % total + total) % total;
@@ -391,9 +391,9 @@ window.__ModuleLoader__.load({
       const commitBoard = () => {
         if (board.mode === null) return;
         const target = board.ids[board.index] ?? null;
-        // Hand the next tap its position: releasing Alt ends this gesture, but a
-        // quick press after it should continue through the same cards instead of
-        // restarting on "the most recent one".
+        // 把位置交给下一次点按：松开 Alt 结束本次手势，
+        // 但紧随其后的一次快速按下应沿着同一组卡片继续，
+        // 而不是从“最近的那个”重新开始。
         if (target !== null && board.ids.length > 1) {
           tapRing.ids = [...board.ids];
           tapRing.index = board.index;
@@ -407,8 +407,8 @@ window.__ModuleLoader__.load({
       const closeBoard = (restoreFocus) => {
         if (board.mode === null) return;
         board.mode = null;
-        // The gesture that opened the board is over; the next open must not
-        // read this release again as a fresh tap.
+        // 打开轮切板的那次手势已经结束；下一次打开
+        // 不得再把这次抬起当成新的点按。
         keyWatch.baseUpAt = 0;
         keyWatch.altUpAt = 0;
         keyWatch.lastBaseDownAt = 0;
@@ -431,8 +431,8 @@ window.__ModuleLoader__.load({
       };
       const removeBoardTarget = (id) => {
         if (board.mode === null || typeof id !== 'string') return;
-        // The current conversation anchors the board: it is the first card and
-        // never joins the ring, so it cannot be dropped from this interaction.
+        // 当前会话是轮切板的锚点：它是第一张卡片，
+        // 且从不加入环，因此不会在本次交互中被移除。
         if (id === currentSessionId()) return;
         const at = board.ids.indexOf(id);
         if (at === -1) return;
@@ -450,9 +450,9 @@ window.__ModuleLoader__.load({
         board.index = Math.min(Math.max(index, 0), ids.length - 1);
         publishBoard();
       };
-      // Shell-only: asks the window to stop interpreting keys as menu mnemonics
-      // while a recorder or the board owns the keyboard. Plain Web has no such
-      // channel, and does not need one.
+      // 仅桌面壳：当录制器或轮切板占用键盘时，请求窗口停止把按键
+      // 解释为菜单助记键。纯 Web 没有这样的通道，
+      // 也不需要。
       const captureKeyboard = () => {
         const service = ctx.shortcuts;
         return typeof service?.recording === 'function' ? service.recording(true) : undefined;
@@ -463,11 +463,11 @@ window.__ModuleLoader__.load({
         void Promise.resolve(service.recording(false)).catch(() => {});
       };
       const boardCodeLabel = (code) => String(code ?? '').replace(/^(Key|Digit)/u, '');
-      // DSH's Web runtime refuses Alt-only bindings on its own save path, so a
-      // browser can never store the board's base row. The gesture is read from
-      // this document instead, which leaves only the base letter to recover: it
-      // comes from whichever board row the browser could store (the Ctrl+Alt
-      // variant) and falls back to Q, the letter documented for the board.
+      // DSH 的 Web 运行时在自己的保存路径上会拒绝纯 Alt 绑定，
+      // 所以浏览器永远无法保存轮切板的基础行。于是手势改为
+      // 从该文档读取，只剩基础字母需要找回：
+      // 它来自浏览器能够保存的那一行轮切板记录（Ctrl+Alt 变体），
+      // 找不到时回退到 Q，也就是文档中为轮切板指定的字母。
       const webBoardCode = () => {
         try {
           const catalog = ctx.shortcuts.catalog.getSnapshot();
@@ -479,13 +479,13 @@ window.__ModuleLoader__.load({
           return 'KeyQ';
         }
       };
-      // The base combination is read back from the shortcut catalog so the board
-      // never hard-codes a key the user may have re-recorded.
+      // 基础组合从快捷键目录读回，这样轮切板
+      // 永远不必硬编码用户可能重新录制过的按键。
       const boardBaseBinding = () => {
         try {
-          // On Web the row is unsaveable rather than empty, and letting that
-          // disable the gesture is exactly why a bare Alt+Q did nothing there:
-          // derive the pure Alt binding from the stored letter instead.
+          // 在 Web 上这一行是“无法保存”而非“为空”，而若让它
+          // 因此禁用手势，正是那里单独的 Alt+Q 毫无反应的原因：
+          // 改为从已保存的字母推导出纯 Alt 绑定。
           if (webReady()) return { code: webBoardCode(), modifiers: ['alt'] };
           return ctx.shortcuts.catalog.getSnapshot()
             .find((row) => row.id === boardIds[0])?.binding ?? null;
@@ -494,22 +494,22 @@ window.__ModuleLoader__.load({
           return null;
         }
       };
-      // While the board is open the window must stop treating keys as menu
-      // mnemonics. Otherwise Windows keeps the Alt release inside the menu bar,
-      // the document never sees it, and "release to commit" cannot be honoured.
-      // The switch is asynchronous, so a fast tap can outrun it; `active` only
-      // becomes true once the bridge confirms, and the tap path below covers the
-      // window where the release would still be swallowed.
+      // 轮切板打开期间，窗口必须停止把按键当作菜单助记键。
+      // 否则 Windows 会把 Alt 抬起留在菜单栏里，
+      // 文档永远看不到它，“松开即提交”就无从兑现。
+      // 这个切换是异步的，快速点按可能抢在它之前；
+      // 只有桥接确认之后 `active` 才为真，
+      // 而下面那条点按路径覆盖了抬起仍可能被吞掉的那段时间窗。
       const startBoardCapture = () => {
         const service = ctx.shortcuts;
         if (typeof service?.recording !== 'function') return;
-        // A pre-armed capture already holds the keyboard; asking twice would
-        // queue a second release the close path never pairs.
+        // 已预置的捕获本身就占着键盘；再请求一次会
+        // 排入第二次释放，而关闭路径永远不会与之配对。
         if (board.captureActive || board.capturePending) return;
         board.capturePending = true;
         Promise.resolve(service.recording(true)).then(() => {
-          // Closed while the request was in flight: stopBoardCapture has already
-          // queued the matching release, so nothing else to do here.
+          // 请求尚在进行中就被关闭：stopBoardCapture 已经
+          // 排入了对应的释放，所以这里无需再做别的。
           if (!board.capturePending) return;
           board.capturePending = false;
           board.captureActive = true;
@@ -519,9 +519,9 @@ window.__ModuleLoader__.load({
         });
       };
       const stopBoardCapture = () => {
-        // Every gesture re-arms from scratch: leaving the flag set made the
-        // second Alt press skip the pre-arm and fall back to a menu that
-        // swallows the release again.
+        // 每次手势都从头重新预置：若让标志位保持置位，第二次
+        // Alt 按下就会跳过预置，退回那只又会吞掉
+        // 抬起事件的菜单。
         if (preArm.on) {
           preArm.on = false;
           if (preArm.timer !== 0 && typeof clearTimeout === 'function') clearTimeout(preArm.timer);
@@ -533,13 +533,13 @@ window.__ModuleLoader__.load({
         Promise.resolve(ctx.shortcuts?.recording?.(false)).catch((error) =>
           console.error('kana-desktop-shortcuts: board keyboard release failed', error));
       };
-      // Holding Alt is the only moment the board needs the keyboard. On Windows
-      // the window takes that key for its menu before this document ever sees
-      // the Q that follows, and the switch that stops it (`setIgnoreMenuShortcuts`)
-      // is only reachable through `shortcuts.recording`. So the plugin takes the
-      // keyboard for as long as Alt stays down: the whole gesture then arrives
-      // here, and DSH's own dispatch is bypassed on purpose. Any other Alt
-      // binding is silenced for that hold — the price of Alt+Q working at all.
+      // 按住 Alt 是轮切板唯一需要键盘的时刻。在 Windows 上，
+      // 该文档还没看到随后的 Q，窗口就已经把这个键交给了自己的菜单，
+      // 而阻止它的开关（`setIgnoreMenuShortcuts`）
+      // 只能通过 `shortcuts.recording` 触达。所以插件在 Alt 按住的
+      // 整个期间占用键盘：整个手势于是都到达这里，
+      // 并有意绕过 DSH 自己的分发。按住期间其他 Alt
+      // 绑定都被静音——这是让 Alt+Q 能工作的代价。
       const preArm = { on: false, timer: 0 };
       const preArmLimitMs = 2000;
       const releasePreArm = () => {
@@ -550,31 +550,31 @@ window.__ModuleLoader__.load({
         const was = preArm.on;
         preArm.on = false;
         if (!was) return;
-        // Once the board is open it owns the capture; only an Alt press that
-        // never became a board has to give the keyboard back here.
+        // 轮切板一旦打开就由它掌管捕获；只有一次始终没能
+        // 变成轮切板的 Alt 按下，才需要在这里交还键盘。
         if (board.mode === null) stopBoardCapture();
       };
       const holdPreArm = (event) => {
-        // Only a bare Alt press starts a board gesture. When Ctrl or Meta is
-        // already down the user is reaching for a normal Ctrl+Alt shortcut
-        // (`Ctrl+Alt+D` and friends), which must keep flowing to DSH.
+        // 只有单独按下 Alt 才启动轮切板手势。当 Ctrl 或 Meta 已经
+        // 按下时，用户是在用普通的 Ctrl+Alt 快捷键
+        // （`Ctrl+Alt+D` 之类），这些必须继续流向 DSH。
         if (event?.ctrlKey || event?.metaKey) return;
-        // The pre-arm exists only to defeat the Electron window menu. A browser
-        // has no such menu and keeps dispatching, so pre-arming there would run
-        // the gesture twice — open via this path and then step again through the
-        // ordinary dispatch.
+        // 预置只为了对抗 Electron 窗口菜单。浏览器
+        // 没有这样的菜单，会继续分发，所以在那里预置会把
+        // 手势跑两遍——先经这条路径打开，然后再经
+        // 普通分发步进一次。
         if (typeof ctx.shortcuts?.recording !== 'function') return;
         if (preArm.on || board.mode !== null || !switcherReady()) return;
         preArm.on = true;
         startBoardCapture();
         if (typeof setTimeout === 'function') preArm.timer = setTimeout(releasePreArm, preArmLimitMs);
       };
-      // With the capture held the native dispatcher stays silent, so the board
-      // moves itself: the recorded base key steps forward and Shift reverses it.
+      // 捕获生效期间原生分发器保持沉默，所以轮切板
+      // 自行移动：录制的基础键向前步进，Shift 则反向。
       const boardMoves = (event) => {
         if (!board.captureActive) return false;
-        // On Web the document listener already reads the gesture, so stepping
-        // here as well would move two cards per tap.
+        // 在 Web 上文档监听器已经读取了手势，若在这里
+        // 再步进一次，一次点按就会移动两张卡片。
         if (webReady()) return false;
         const binding = boardBaseBinding();
         if (!binding || binding.secondCode || event.code !== binding.code) return false;
@@ -591,10 +591,10 @@ window.__ModuleLoader__.load({
         if (event.isComposing || event.getModifierState?.('AltGraph')) return;
         const altKey = event.code === 'AltLeft' || event.code === 'AltRight';
         if (boardMoves(event)) return;
-        // Losing the modifier without the matching keyup means the release may
-        // never arrive; cancelling is the only outcome that cannot misfire. The
-        // browser path accepts the Alt press we saw as still being held, because
-        // Windows can deliver the key that follows with the modifier cleared.
+        // 修饰键在消失时却没有对应的抬起事件，意味着抬起可能
+        // 永远不会到达；取消是唯一不会误触的结果。浏览器路径
+        // 接受我们看到的那次 Alt 按下视为仍被按住，因为
+        // Windows 可能在修饰键已被清除的情况下送来随后的按键。
         const altGesture = event.altKey || (webReady() && keyWatch.altDownAt !== 0
           && Date.now() - keyWatch.altDownAt <= 1500);
         if (board.mode === 'transient' && !altKey && !altGesture) {
@@ -630,12 +630,12 @@ window.__ModuleLoader__.load({
       };
       const boardKeyUp = (event) => {
         if (board.mode !== 'transient') return;
-        // A fast tap (Alt+Q released at once) can outrun the asynchronous
-        // keyboard capture, and then the menu bar swallows the Alt release and
-        // the board would hang open. The base key's own release is the signal we
-        // do get in that window, so it commits exactly like Alt+Tab does. Only
-        // the shell path needs this fallback: a browser never captures, so its
-        // base keyup means "move again", not "commit".
+        // 一次快速点按（Alt+Q 立刻松开）可能抢在异步的
+        // 键盘捕获之前，随后菜单栏吞掉 Alt 抬起，
+        // 轮切板就会一直挂在屏幕上。在那个时间窗里，基础键自身的
+        // 抬起是我们确实能拿到的信号，所以它像 Alt+Tab 一样提交。
+        // 只有桌面壳路径需要这个兜底：浏览器从不捕获，
+        // 因此它的基础键抬起表示“再走一步”，而非“提交”。
         if (!board.captureActive && !webReady()) {
           const binding = boardBaseBinding();
           if (binding !== null && !binding.secondCode && event.code === binding.code) {
@@ -647,11 +647,11 @@ window.__ModuleLoader__.load({
         if (webReady()) {
           const binding = boardBaseBinding();
           if (binding !== null && !binding.secondCode && event.code === binding.code) {
-            // Alt still held means this is the end of one tap, not the end of the
-            // gesture: tapping Q again moves on. The modifier release commits
-            // below. Only when the release arrives with the modifier already
-            // gone (the browser cleared altKey on the press, so no Alt keyup is
-            // coming) does the base key's own release have to commit.
+            // Alt 仍按着意味着这是一次点按的结束，而不是
+            // 手势的结束：再点按一次 Q 会继续前进。修饰键的抬起会在
+            // 下面提交。只有当抬起到达时修饰键已经
+            // 消失（浏览器在按下时清掉了 altKey，因此不会再有
+            // Alt 抬起），才需要由基础键自身的抬起提交。
             if (event.altKey || event.ctrlKey || event.metaKey) return;
             if (webCommitTimer === 0 && typeof setTimeout === 'function') {
               webCommitTimer = setTimeout(() => {
@@ -662,8 +662,8 @@ window.__ModuleLoader__.load({
             return;
           }
         }
-        // A browser may substitute Ctrl for the Alt the system stole, so either
-        // modifier letting go ends the gesture there.
+        // 浏览器可能用 Ctrl 顶替被系统抢走的 Alt，
+        // 所以这两个修饰键中任意一个松开都会结束那里的手势。
         const altRelease = event.code === 'AltLeft' || event.code === 'AltRight' || event.key === 'Alt';
         const ctrlRelease = webReady()
           && (event.code === 'ControlLeft' || event.code === 'ControlRight' || event.key === 'Control');
@@ -698,11 +698,11 @@ window.__ModuleLoader__.load({
           boardHint(t('boardNone'));
           return false;
         }
-        // The tap finished before this document heard about the press: the keys
-        // are already up, so switching now is the only honest reading of it.
-        // Opening a board here would leave nobody able to close it.
+        // 该文档得知这次按下之前，点按就已结束：按键
+        // 都已经抬起，此时直接切换是唯一诚实的解读。
+        // 在此打开轮切板会没人能把它关掉。
         if (mode === 'transient' && tapAlreadyReleased()) {
-          // Consume the gesture so a second open cannot replay this release.
+          // 消费掉这次手势，避免第二次打开重放这次抬起。
           keyWatch.baseUpAt = 0;
           keyWatch.altUpAt = 0;
           keyWatch.lastBaseDownAt = 0;
@@ -715,9 +715,9 @@ window.__ModuleLoader__.load({
         board.mode = mode;
         board.ids = ids;
         board.index = 1;
-        // A tap that follows the previous one continues across the same cards:
-        // without this every press restarts at "most recent", so Alt+Q can only
-        // ever hop between two sessions no matter how often it is tapped.
+        // 紧接上一次的点按会沿着同一组卡片继续：
+        // 否则每次按下都从“最近”重新开始，Alt+Q 无论点按多少次
+        // 都只能在两个会话之间来回跳。
         if (mode === 'transient' && tapRing.ids.length > 1 && tapRing.expected === currentSessionId() &&
           Date.now() - tapRing.at <= tapRingWindowMs) {
           const target = tapRingStep();
@@ -783,8 +783,8 @@ window.__ModuleLoader__.load({
           return true;
         });
       };
-      // A trigger forwarded from an embedded frame reports its source; the
-      // release of Alt never reaches this document in that case.
+      // 从内嵌框架转发来的触发会带上来源；那种情况下
+      // Alt 的抬起永远不会到达该文档。
       const boardFocusOk = (context) => context?.source !== 'iframe' && context?.source !== 'webview';
       const commands = [
         { id: ids[0], key: 'devtools', nativeOnly: true,
@@ -816,19 +816,19 @@ window.__ModuleLoader__.load({
             run: () => { const panel = panelForDigit(digit); if (panel) ctx.layout.selectPanel(panel.id); },
             available: () => Boolean(panelForDigit(digit)) };
         }),
-        // The board records one base combination and derives the other two, so
-        // the three rows stay out of the ordinary shortcut list (`board: true`).
+        // 轮切板只记录一个基础组合并派生另外两个，
+        // 所以这三行不出现在普通快捷键列表里（`board: true`）。
         { id: boardIds[0], key: 'board', board: true, regions: ['page', 'editable', 'terminal'],
           resolve: (context) => {
-            // On Web this document already opened or stepped the board from its
-            // own keydown listener; letting the dispatch run as well would move
-            // the highlight twice for one press.
+            // 在 Web 上该文档已经用自己的 keydown 监听器打开了
+            // 或步进了轮切板；若再让分发执行一次，
+            // 一次按下会让高亮移动两次。
             if (webReady()) return { status: 'handled', run: () => {} };
             if (!switcherReady() || !pageReady() || !document.hasFocus() || context?.modal !== null) {
               return { status: 'blocked', reason: 'board-unavailable' };
             }
-            // An embedded frame cannot observe the Alt release; refuse rather
-            // than open a board that could not commit or cancel safely.
+            // 内嵌框架观测不到 Alt 抬起；宁可直接拒绝，
+            // 也不打开一个无法安全提交或取消的轮切板。
             if (board.mode === null && !boardFocusOk(context)) {
               boardHint(t('boardFocus'));
               return { status: 'handled', run: () => {} };
@@ -857,8 +857,8 @@ window.__ModuleLoader__.load({
             }
             return { status: 'handled', run: () => {
               if (board.mode === null) openBoard('pinned');
-              // Pinning an open transient board keeps the highlight; pressing
-              // the combination again cancels and never commits implicitly.
+              // 固定正在打开的临时板会保留高亮；再次按
+              // 该组合键则取消，且绝不隐式提交。
               else if (board.mode === 'transient') { board.mode = 'pinned'; publishBoard(); }
               else closeBoard(true);
             } };
@@ -867,9 +867,9 @@ window.__ModuleLoader__.load({
       const enabledCommands = () => commands.filter((command) =>
         (!command.nativeOnly || devtoolsReady()) && (!command.board || switcherReady()));
       const commandLabel = (command) => command.label?.() ?? t(command.key);
-      // Lexical handles Ctrl+Shift+Z (redo) before the shortcuts service's
-      // window-bubble listener. Route only our explicitly assigned new actions
-      // in the editable capture phase; leave every other key to its owner.
+      // Lexical 会先于快捷键服务的窗口冒泡监听器处理
+      // Ctrl+Shift+Z（重做）。只在可编辑区域的捕获阶段转发
+      // 我们明确指派的新动作；其他所有按键都留给它原本的归属者。
       ctx.effect(() => {
         const onEditableKey = (event) => {
           if (!desktopReady() || ctx.shortcuts.runtime !== 'web' || !document.hasFocus() ||
@@ -882,7 +882,7 @@ window.__ModuleLoader__.load({
             event.ctrlKey && 'control', event.altKey && 'alt', event.shiftKey && 'shift', event.metaKey && 'meta',
           ].filter(Boolean);
           for (const command of commands.slice(3)) {
-            // Board keys are native-desktop only and never recorded on web.
+            // 轮切板按键仅限原生桌面，在 Web 上从不录制。
             if (command.board) continue;
             const binding = ctx.shortcuts.catalog.getSnapshot().find((row) => row.id === command.id)?.binding;
             if (!binding || binding.secondCode || binding.code !== event.code ||
@@ -958,10 +958,10 @@ window.__ModuleLoader__.load({
           if (!/^Digit[1-9]$/.test(gesture.code) || !gesture.control || gesture.shift || gesture.meta ||
               gesture.repeat || gesture.composing || gesture.defaultPrevented || context.modal !== null ||
               context.region === 'terminal' || occupied(gesture.code)) return;
-          // The shell reads a bare Ctrl+digit. A browser keeps that combination
-          // for its own tab bar, so the Web build asks for Ctrl+Alt+digit, which
-          // reaches the page and is also one of the combinations the Web runtime
-          // accepts.
+          // 桌面壳读取单独的 Ctrl+数字。浏览器会把该组合
+          // 留给自己的标签栏，所以 Web 版改用 Ctrl+Alt+数字，它
+          // 能到达页面，同时也是 Web 运行时接受的
+          // 组合之一。
           const web = webPanelAvailable();
           if (!fixedPanelAvailable() && !web) return;
           if (web ? !gesture.alt : gesture.alt) return;
@@ -989,8 +989,8 @@ window.__ModuleLoader__.load({
         const [busy, setBusy] = React.useState(false);
         const [message, setMessage] = React.useState('');
         const recorder = React.useRef(null);
-        // The board records one combination and derives the other two, so its
-        // state stays separate from the single-action rows above.
+        // 轮切板记录一个组合并派生另外两个，所以它的
+        // 状态与上面那些单动作行分开存放。
         const [boardRecording, setBoardRecording] = React.useState(false);
         const [boardRecordReady, setBoardRecordReady] = React.useState(false);
         const [boardBusy, setBoardBusy] = React.useState(false);
@@ -1029,8 +1029,8 @@ window.__ModuleLoader__.load({
           }
         };
         const boardBaseRow = catalog.find((row) => row.id === boardIds[0]);
-        // The browser keeps the Ctrl+Alt row only, while the key the user
-        // actually presses is the bare Alt one, so the panel names the gesture.
+        // 浏览器只保留 Ctrl+Alt 那一行，而用户实际按的
+        // 是单独的 Alt，所以面板按手势的实际形态来命名。
         const boardStoredRow = webReady()
           ? boardIds.map((id) => catalog.find((row) => row.id === id))
             .find((row) => row?.binding && !row.binding.secondCode)
@@ -1039,16 +1039,16 @@ window.__ModuleLoader__.load({
           if (webReady()) return `Alt + ${boardCodeLabel(webBoardCode())}`;
           return boardBaseRow?.keys?.length ? boardBaseRow.keys.join('') : t('empty');
         };
-        // The three derived combinations are saved together: either all of them
-        // are free and get written, or nothing changes at all.
+        // 三个派生组合一起保存：要么三者都
+        // 未被占用并写入，要么什么都不改。
         const saveBoardBinding = async (candidate) => {
           if (!switcherReady() || config.status !== 'ready' || busy || boardBusy) return;
           const modifiers = [['alt'], ['alt', 'shift'], ['control', 'alt']];
-          // A browser can only persist the Ctrl+Alt variant: DSH refuses an
-          // Alt-only binding on the Web runtime, so writing all three rows made
-          // the whole save fail and left the board unusable there. That one row
-          // carries the letter, and the plain Alt / Shift+Alt gestures are
-          // derived from it locally.
+          // 浏览器只能持久化 Ctrl+Alt 变体：DSH 在 Web 运行时上
+          // 拒绝纯 Alt 绑定，所以写三行会让整个保存失败，
+          // 轮切板在那里变得不可用。那一行
+          // 携带字母信息，纯 Alt 与 Shift+Alt 手势都在本地
+          // 由它推导。
           const rows = webReady() ? [2] : [0, 1, 2];
           const targets = rows.map((index) => ({
             id: boardIds[index],
@@ -1060,11 +1060,11 @@ window.__ModuleLoader__.load({
               if (target.binding === null) continue;
               const description = ctx.shortcuts.describeBinding(target.binding);
               const conflicts = description.conflicts.filter((id) => !boardIds.includes(id));
-              // DSH refuses Alt-only combinations on its Web runtime because a
-              // browser may keep them to itself. That guard is right for
-              // arbitrary bindings, but the board's Alt rows are the whole point
-              // of this plugin and a browser (unlike the Electron window menu)
-              // does deliver a bare Alt release. Keep every other issue enforced.
+              // DSH 在其 Web 运行时上拒绝纯 Alt 组合，因为浏览器
+              // 可能把它们据为己有。对任意绑定来说这条限制是对的，
+              // 但轮切板的 Alt 行正是本插件的全部意义所在，
+              // 而且浏览器（不同于 Electron 窗口菜单）确实会
+              // 送来单独的 Alt 抬起。其他所有问题仍照旧强制执行。
               const tolerated = webReady() && description.issue === 'unsupported-browser';
               if ((description.issue !== null && !tolerated) || conflicts.length > 0) {
                 setBoardMessage(description.issue !== null ? t('invalidBinding')
@@ -1186,8 +1186,8 @@ window.__ModuleLoader__.load({
         React.useEffect(() => {
           if (recordingId !== null && recordReady) recorder.current?.focus();
         }, [recordingId, recordReady]);
-        // Alt-only recorder for the board. The ordinary recorder requires a
-        // primary modifier, so it can never capture the base combination.
+        // 轮切板专用的纯 Alt 录制器。普通录制器要求
+        // 一个主修饰键，因此永远无法捕获基础组合。
         React.useEffect(() => {
           if (!boardRecording) return undefined;
           let disposed = false;
@@ -1337,9 +1337,9 @@ window.__ModuleLoader__.load({
         message && React.createElement('p', { role: 'status', style: { color: colors.error } }, message));
       }
 
-      // Rendered inside the shell overlay, so it covers this app window only.
-      // Deliberately not a dialog: DSH reads an aria-modal element as a modal
-      // and would block this plugin's own commands while the board is open.
+      // 渲染在桌面壳浮层中，因此只覆盖本应用窗口。
+      // 刻意不用对话框：DSH 会把 aria-modal 元素当作模态框，
+      // 在轮切板打开期间会阻断本插件自己的命令。
       function SessionBoard() {
         const state = React.useSyncExternalStore(boardSubscribe, boardSnapshot);
         const root = React.useRef(null);
@@ -1347,8 +1347,8 @@ window.__ModuleLoader__.load({
         React.useEffect(() => {
           if (state.mode !== null) root.current?.focus?.();
         }, [state.mode]);
-        // Keep the highlighted card visible without ever asking for the mouse:
-        // rows scroll only once the panel has reached its maximum shape.
+        // 让高亮卡片保持可见，且从不请求鼠标：
+        // 只有当面板达到最大尺寸后行才会滚动。
         React.useEffect(() => {
           if (state.mode === null) return;
           cardRefs.current[state.index]?.scrollIntoView?.({ block: 'nearest', inline: 'nearest' });
@@ -1376,10 +1376,10 @@ window.__ModuleLoader__.load({
         },
         React.createElement('div', {
           role: 'listbox', 'aria-label': t('boardTitle'),
-          // A rectangle that grows with the conversation count, like the Windows
-          // switcher: one row while it fits, extra rows after that. It never
-          // grows past its maximum shape; further cards scroll vertically, and
-          // the highlight is scrolled into view so the keyboard alone suffices.
+          // 一个随会话数量增长、形似 Windows 切换器的矩形：
+          // 放得下时只有一行，之后增加行。它绝不会
+          // 超过最大尺寸；更多卡片纵向滚动，
+          // 高亮会被滚动到可见处，因此仅靠键盘就足够。
           style: { display: 'grid', gap: 12, padding: '16px 20px',
             gridTemplateColumns: `repeat(${boardColumns}, 190px)`,
             gridAutoRows: `${boardCardHeight}px`,
@@ -1423,9 +1423,9 @@ window.__ModuleLoader__.load({
         let disposeBoard;
         let disposeCommands;
         let registeredKind;
-        // Record the base press and both releases for the whole session: the board
-        // may be created after the tap already finished, and only the Alt release
-        // is still delivered to the page in that window.
+        // 整轮会话都记录基础键按下和两次抬起：轮切板
+        // 可能在点按已经结束之后才创建，而在那个时间窗里
+        // 只有 Alt 抬起仍会送达页面。
         const trackDown = (event) => {
           const binding = boardBaseBinding();
           if (event.code === 'AltLeft' || event.code === 'AltRight') {
@@ -1436,49 +1436,49 @@ window.__ModuleLoader__.load({
             return;
           }
           if (binding === null || binding.secondCode || event.code !== binding.code) {
-            // Any other key ends the hold: shortening the silenced window keeps
-            // an unrelated Alt combination from being swallowed whole.
+            // 任何其他按键都会结束这次按住：缩短静音的时间窗
+            // 可以避免一个无关的 Alt 组合被整段吞掉。
             if (preArm.on) releasePreArm();
             return;
           }
           keyWatch.lastBaseDownAt = Date.now();
-          // While the pre-arm holds the keyboard DSH dispatch stays silent, so
-          // the board has to be opened from this document instead.
+          // 预置占着键盘期间 DSH 分发保持沉默，所以
+          // 轮切板只能从该文档打开。
           if (preArm.on && board.mode === null && event.altKey) {
             if (openBoard(event.ctrlKey ? 'pinned' : 'transient') && event.shiftKey && board.mode === 'transient') {
               moveBoard(-1);
             }
             return;
           }
-          // A browser has no pre-arm and no menu to fight, but DSH's Web runtime
-          // refuses Alt-only bindings on its own save path, so the gesture may
-          // never be dispatched. Drive the board from this document as well: it
-          // is the same keys the user recorded, only read one layer earlier.
+          // 浏览器没有预置，也没有菜单要对抗，但 DSH 的 Web 运行时
+          // 在自己的保存路径上拒绝纯 Alt 绑定，因此手势可能
+          // 永远不会被分发到。同样改为从该文档驱动轮切板：
+          // 按键仍是用户录制的那一组，只是读取早了一层。
           if (webReady() && switcherReady()) {
-            // Windows hands a bare Alt press to the window menu, so the Q that
-            // follows can arrive with altKey already cleared. The Alt press we
-            // did see is therefore also accepted as the start of the gesture.
+            // Windows 会把单独的 Alt 按下交给窗口菜单，所以随后
+            // 的 Q 到达时 altKey 可能已被清除。我们确实看到的
+            // 那次 Alt 按下因此也被接受为手势的开始。
             const recentAlt = keyWatch.altDownAt !== 0 && Date.now() - keyWatch.altDownAt <= 1500;
-            // A pinned board is already waiting for the user: the gesture is
-            // over and no modifier is needed any more, so a plain key steps and
-            // Shift reverses. Requiring the full combination there only made a
-            // pinned board feel stuck (a bare Alt press is taken by the browser
-            // menu, so Alt+Q never arrived).
+            // 固定板已经在等用户了：手势已经结束，
+            // 不再需要任何修饰键，所以普通按键即可步进，
+            // Shift 反向。在那里仍要求完整组合只会让
+            // 固定板显得卡住（单独的 Alt 按下被浏览器菜单
+            // 拿走，所以 Alt+Q 永远到不了）。
             if (board.mode === 'pinned') {
               if (event.repeat) return;
               moveBoard(event.shiftKey ? -1 : 1);
               return;
             }
             if (board.mode === null && event.altKey && event.ctrlKey && event.shiftKey) {
-              // Pinning is the rare case: a third modifier keeps it reachable in
-              // a browser without stealing the ordinary gesture. Only a CLOSED
-              // board may be pinned this way — Shift is the reverse key for an
-              // open one, so Ctrl+Shift+Alt+Q must step back, not freeze the
-              // board where it stands.
+              // 固定是少见的情况：多一个修饰键能让它在
+              // 浏览器里触达，又不占用普通手势。只有处于关闭
+              // 状态的轮切板才可这样固定——对已打开的板，Shift 是反向键，
+              // 所以 Ctrl+Shift+Alt+Q 必须后退，
+              // 而不是把轮切板冻结在原地。
               openBoard('pinned');
             } else if (event.altKey || (recentAlt && !event.metaKey)) {
-              // Holding Alt and tapping again means "one more step", so a pending
-              // commit from the previous release has to be dropped first.
+              // 按住 Alt 再次点按意味着“再走一步”，所以必须先
+              // 丢弃上一次抬起留下的待提交操作。
               if (webCommitTimer !== 0 && typeof clearTimeout === 'function') {
                 clearTimeout(webCommitTimer);
                 webCommitTimer = 0;
@@ -1496,8 +1496,8 @@ window.__ModuleLoader__.load({
           }
           if (event.code === 'AltLeft' || event.code === 'AltRight') {
             keyWatch.altUpAt = Date.now();
-            // Only Alt was tapped: give the keyboard back at once, so no other
-            // Alt binding stays silenced behind the timeout.
+            // 只点按了 Alt：立刻交还键盘，这样没有其他
+            // Alt 绑定会因超时而持续静音。
             if (board.mode === null) releasePreArm();
           }
         };
@@ -1515,8 +1515,8 @@ window.__ModuleLoader__.load({
             disposeSlot();
             disposeSlot = undefined;
           }
-          // The board lives in the shell overlay so it only covers this app
-          // window, and only where the Alt release is provably observable.
+          // 轮切板位于桌面壳浮层中，因此只覆盖本应用
+          // 窗口，且只在 Alt 抬起可被可靠观测的地方出现。
           if (switcherReady() && !disposeBoard) {
             disposeBoard = ctx.slots.inject('shell.overlay', () => ctx.slots.register({
               name: 'shell.overlay', id: 'kana.session-board',

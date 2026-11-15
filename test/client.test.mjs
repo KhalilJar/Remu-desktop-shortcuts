@@ -49,12 +49,12 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
   const config = { status: 'ready', revision: 'one' };
   const catalog = [];
   const stateUpdates = [];
-  // Hooks are keyed by call order within one render, so every registered
-  // component gets its own store and its own re-render queue. That keeps a
-  // state update from one component out of another component's slot order.
+  // 钩子按单次渲染内的调用顺序登记，因此每个注册的组件都有
+  // 自己的状态存储与重渲染队列。这样一个组件的状态更新
+  // 就不会串进另一个组件的插槽顺序里。
   let hookStore = { values: new Map(), effects: new Map(), refs: new Map() };
-  // Each hook kind keeps its own call counter, so a state index stays the
-  // n-th useState of a render no matter how many effects or refs sit between.
+  // 每种钩子各有独立的调用计数器，因此无论中间夹了多少个
+  // effect 或 ref，状态索引始终是该次渲染的第 n 个 useState。
   let stateIndex = 0;
   let effectIndex = 0;
   let refIndex = 0;
@@ -205,7 +205,7 @@ test('registers eighteen unbound Desktop actions and one dedicated settings page
   assert.equal(commands.length, 18);
   for (const command of commands) {
     assert.deepEqual(Object.keys(command.defaults), []);
-    // Official Desktop validates every dot-separated segment at its IPC boundary.
+    // 官方 Desktop 会在自己的 IPC 边界校验每个点分隔的片段。
     assert.match(command.id, /^[a-z][a-zA-Z0-9-]*(?:\.[a-zA-Z][a-zA-Z0-9-]*)+$/);
   }
   assert.equal(slots[0].options.id, 'kana-desktop-shortcuts');
@@ -251,8 +251,8 @@ test('compatibility mode without a body marker uses trusted preload plus URL mod
   assert.deepEqual(compatible.actions, [null]);
   for (const off of compatible.disposed.reverse()) off();
   const browserImpersonator = load({ mode: null, urlMode: 'compatibility', bridge: false, runtime: 'web' });
-  // No preload bridge: the URL marker cannot claim Desktop mode, so this is
-  // treated as plain Web — served, but without any Desktop capability.
+  // 没有预加载桥接：URL 标记无法冒充 Desktop 模式，因此
+  // 按纯 Web 处理——仍会加载，但不具备任何 Desktop 能力。
   assert.equal(browserImpersonator.commands.some((command) =>
     command.id === 'kana.shortcuts.devtools'), false);
   assert.equal(browserImpersonator.commands.length, 17);
@@ -286,7 +286,7 @@ test('official Desktop registers native-compatible actions, while plain Web regi
   for (const platform of ['windows', 'macos', 'linux']) {
     const browser = load({ mode: null, bridge: false, official: false, runtime: 'web', platform });
     assert.equal(browser.slots[0].options.id, 'kana-desktop-shortcuts');
-    // 18 actions minus DevTools, which needs a shell to open a real devtools.
+    // 18 个动作减去 DevTools，后者需要桌面壳才能打开真正的 devtools。
     assert.equal(browser.commands.length, platform === 'windows' ? 17 : 14);
     assert.equal(browser.commands.some((command) => command.id === 'kana.shortcuts.devtools'), false);
     for (const off of browser.disposed.reverse()) off();
@@ -307,8 +307,8 @@ test('DSH NEXT reuses the original DevTools ID through its guarded native comman
   for (const off of next.disposed.reverse()) off();
 
   const browser = load({ mode: null, bridge: false, next: true, runtime: 'web' });
-  // NEXT's native DevTools command needs the shell, so a plain browser keeps
-  // the other actions and never gains that row.
+  // NEXT 的原生 DevTools 命令需要桌面壳，所以普通浏览器只保留
+  // 其余动作，永远不会多出这一行。
   assert.equal(browser.commands.some((command) => command.id === 'kana.shortcuts.devtools'), false);
   assert.equal(browser.commands.length, 17);
   for (const off of browser.disposed.reverse()) off();
@@ -462,7 +462,7 @@ test('editable capture leaves unbound and conflicted shortcuts untouched', () =>
 
 test('quick session shortcut cycles recent then remaining visible conversations', () => {
   const { commands, actions, selected, selectedListeners, disposed } = load({ runtime: 'web' });
-  // Two manually visited sessions build a genuine MRU history.
+  // 两个手动访问过的会话构成一段真实的 MRU 历史。
   selected.key = 's2';
   for (const listener of selectedListeners) listener();
   selected.key = 's1';
@@ -546,8 +546,8 @@ test('panel order follows live slots and fixed conflicts are not consumed', () =
 });
 
 test('never invokes in an unknown mode, in a modal, or while unfocused', () => {
-  // A Desktop shell whose mode is unrecognised stays inactive; a plain browser
-  // is not a Desktop shell in an unknown mode, so it is handled separately.
+  // Desktop 壳的模式无法识别时保持不激活；普通浏览器
+  // 并不是未知模式下的 Desktop 壳，因此单独处理。
   for (const config of [{ mode: 'unknown' }, { mode: null, bridge: true }]) {
     const unsupported = load(config);
     assert.equal(unsupported.commands.length, 0);
@@ -578,8 +578,8 @@ const overlaySlot = (environment) => environment.slots.find((slot) => slot.optio
 const boardNode = (environment) => descendants(overlaySlot(environment).component())
   .find((node) => typeof node.props?.['data-kana-session-board'] === 'string');
 
-// A closed board may still leave a diagnostic hint node behind, so tests ask
-// whether the board itself is on screen instead of whether a node exists.
+// 已关闭的轮切板仍可能留下诊断提示节点，所以测试检查的是
+// 轮切板本身是否在屏幕上，而不是某个节点是否存在。
 const boardOpen = (environment) => ['transient', 'pinned']
   .includes(boardNode(environment)?.props?.['data-kana-session-board']);
 
@@ -590,15 +590,15 @@ const fireWindow = (environment, type, event) => {
 const keyEvent = (event) => ({ altKey: false, ctrlKey: false, shiftKey: false, metaKey: false,
   repeat: false, preventDefault() {}, stopPropagation() {}, ...event });
 
-// Drains every pending microtask, including the ones a chain of awaited edits
-// schedules, without relying on timers inside the sandboxed renderer.
+// 排空所有待处理的微任务，包括由一连串 await 编辑所排定的
+// 那些，同时不依赖沙箱渲染器内的定时器。
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 const cardsOf = (node) => descendants(node).filter((child) => child.props?.role === 'option');
 
 test('session board is offered on the community and NEXT Windows shells and on plain Web Windows', () => {
-  // Plain Web has no window menu to swallow the Alt release, so the board needs
-  // no capture there; it is offered whenever the platform reports Windows.
+  // 纯 Web 没有窗口菜单会吞掉 Alt 抬起，因此那里无需
+  // 捕获；只要平台报告为 Windows，就提供该手势。
   const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
   assert.equal(web.commands.some((command) => command.id === 'kana.shortcuts.session-board'), true);
   web.catalog.push({ id: 'kana.shortcuts.session-board',
@@ -606,29 +606,29 @@ test('session board is offered on the community and NEXT Windows shells and on p
   visitBoard(web, ['s2', 's1']);
   web.actions.length = 0;
   assert.equal(web.captureCalls.length, 0);
-  // The gesture is read from this document: DSH's Web runtime never dispatches
-  // an Alt-only binding, and a browser has nothing to capture it away from.
+  // 手势从本文档读取：DSH 的 Web 运行时从不派发
+  // 仅 Alt 的绑定，浏览器也没有可被捕获走的对象。
   fireWindow(web, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
   fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
   assert.equal(boardNode(web).props['data-kana-session-board'], 'transient');
-  // The same press may still reach the command, which must not step twice.
+  // 同一次按下仍可能抵达命令，此时绝不能多走一步。
   const duplicate = boardCommand(web).resolve({ modal: null });
   assert.equal(duplicate.status, 'handled');
   duplicate.run();
-  // Releasing the base key is "move", not "commit", while Alt is still held.
+  // 在 Alt 仍按住时松开基础键是「移动」，不是「提交」。
   fireWindow(web, 'keyup', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
   assert.deepEqual(web.actions, []);
   fireWindow(web, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
   assert.deepEqual(web.actions, ['open:s2']);
   for (const off of web.disposed.reverse()) off();
 
-  // A browser on another platform cannot promise an observable Alt release.
+  // 其他平台的浏览器无法保证能观察到 Alt 抬起。
   const notWindows = load({ mode: null, bridge: false, official: false, runtime: 'web', platform: 'linux' });
   assert.equal(notWindows.commands.some((command) => command.id === 'kana.shortcuts.session-board'), false);
   for (const off of notWindows.disposed.reverse()) off();
 
-  // The community shell reports runtime "web" but runs the same main-process
-  // capture as NEXT (recording + setIgnoreMenuShortcuts), so it hosts the board.
+  // 社区壳报告 runtime 为 "web"，但执行与 NEXT 相同的主进程
+  // 捕获（录制 + setIgnoreMenuShortcuts），所以它也承载轮切板。
   const community = load({ bridge: true, mode: 'advanced', runtime: 'web' });
   assert.equal(community.commands.some((command) => command.id === 'kana.shortcuts.session-board'), true);
   visitBoard(community, ['s2', 's1']);
@@ -650,7 +650,7 @@ test('session board is offered on the community and NEXT Windows shells and on p
   assert.deepEqual(environment.actions, []);
   fireWindow(environment, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
   assert.deepEqual(environment.actions, ['open:s2']);
-  // The release is consumed once; a stale second keyup must not navigate again.
+  // 释放只消费一次；过期的第二次 keyup 不得再次导航。
   fireWindow(environment, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
   assert.deepEqual(environment.actions, ['open:s2']);
   assert.equal(boardOpen(environment), false);
@@ -658,9 +658,9 @@ test('session board is offered on the community and NEXT Windows shells and on p
 });
 
 test('a browser whose menu clears altKey still reads the gesture, and commits without the Alt release', async () => {
-  // Windows hands a bare Alt press to the window menu, so the key that follows
-  // can arrive with the modifier already cleared. The Alt press we did observe
-  // still marks the start of the gesture.
+  // Windows 会把单纯的 Alt 按下交给窗口菜单，于是紧随其后的按键
+  // 可能到达时修饰键已被清除。我们确实观察到的 Alt 按下
+  // 仍然标记手势的开始。
   const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
   web.catalog.push({ id: 'kana.shortcuts.session-board',
     binding: { code: 'KeyQ', modifiers: ['alt'] } });
@@ -669,7 +669,7 @@ test('a browser whose menu clears altKey still reads the gesture, and commits wi
   fireWindow(web, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
   fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: false }));
   assert.equal(boardNode(web).props['data-kana-session-board'], 'transient');
-  // A cleared modifier must not be read as "the gesture is over".
+  // 修饰键被清除不得被解读为「手势结束」。
   fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: false }));
   assert.equal(boardNode(web).props['data-kana-session-board'], 'transient');
   fireWindow(web, 'keyup', keyEvent({ code: 'KeyQ', key: 'q', altKey: false }));
@@ -678,10 +678,10 @@ test('a browser whose menu clears altKey still reads the gesture, and commits wi
   assert.deepEqual(web.actions, ['open:s2']);
   for (const off of web.disposed.reverse()) off();
 
-  // Alt still held when the base key comes up: that is the end of one tap, not
-  // the end of the gesture. Nothing commits on a short timer there — the board
-  // waits for the modifier release, so tapping Q again keeps moving instead of
-  // switching early.
+  // 基础键抬起时 Alt 仍按住：那是一次点按的结束，而不是
+  // 手势的结束。这里没有短定时器去提交——轮切板
+  // 等待修饰键释放，所以再点一次 Q 会继续移动，而不是
+  // 提前切换。
   const held = load({ mode: null, bridge: false, official: false, runtime: 'web' });
   held.catalog.push({ id: 'kana.shortcuts.session-board',
     binding: { code: 'KeyQ', modifiers: ['alt'] } });
@@ -701,13 +701,13 @@ test('a browser whose menu clears altKey still reads the gesture, and commits wi
   assert.deepEqual(held.actions, []);
   assert.equal(boardOpen(held), true);
   assert.equal(selectedIndex(), firstStep);
-  // A second tap while Alt is still down is one more step, not a commit.
+  // Alt 仍按下时再点一次是多走一步，不是提交。
   fireWindow(held, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
   fireWindow(held, 'keyup', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
   assert.deepEqual(held.actions, []);
   assert.equal(boardOpen(held), true);
   assert.notEqual(selectedIndex(), firstStep);
-  // Only letting go of Alt commits.
+  // 只有松开 Alt 才提交。
   fireWindow(held, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
   assert.equal(held.actions.length, 1);
   assert.equal(boardOpen(held), false);
@@ -715,10 +715,10 @@ test('a browser whose menu clears altKey still reads the gesture, and commits wi
 });
 
 test('a browser whose Alt release is eaten still walks past the newest session on repeated taps', async () => {
-  // The window menu takes the Alt press, so the Q release arrives with altKey
-  // already cleared and no Alt keyup ever follows: every tap has to commit from
-  // its own timer. That is one step per tap, not a jump back to the newest
-  // session — otherwise Alt+Q could only ever toggle between two sessions.
+  // 窗口菜单拿走了 Alt 按下，于是 Q 抬起时 altKey 已被
+  // 清除，也不会再有 Alt keyup 到来：每次点按只能靠
+  // 自己的定时器提交。这样是每次点按走一步，而不是跳回最新的
+  // 会话——否则 Alt+Q 就只能在两个会话之间来回切换。
   const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
   visitBoard(web, ['s1', 's2', 's3']);
   web.actions.length = 0;
@@ -744,7 +744,7 @@ test('a browser can swap Ctrl in for the Alt the system menu stole, and it still
   fireWindow(web, 'keydown', keyEvent({ code: 'AltLeft', key: 'Alt', altKey: true }));
   fireWindow(web, 'keydown', keyEvent({ code: 'ControlLeft', key: 'Control', altKey: true, ctrlKey: true }));
   fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true, ctrlKey: true }));
-  // Ctrl+Alt is a stand-in for the stolen bare Alt, not a request to pin.
+  // Ctrl+Alt 是替代被抢走的裸 Alt，不是要求固定。
   assert.equal(boardNode(web).props['data-kana-session-board'], 'transient');
   fireWindow(web, 'keyup', keyEvent({ code: 'ControlLeft', key: 'Control' }));
   assert.deepEqual(web.actions, ['open:s2']);
@@ -765,9 +765,9 @@ test('Shift steps an open browser board backwards instead of pinning it', () => 
   fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true }));
   const opened = selectedAt(web);
   assert.notEqual(opened, -1);
-  // The Ctrl+Alt stand-in is what a user reaches for after the browser stole
-  // Alt, so adding Shift there has to step back — it used to freeze the board
-  // in pinned mode instead.
+  // 浏览器抢走 Alt 后，用户会改用 Ctrl+Alt 这个替代组合，
+  // 因此在那里加上 Shift 就必须往回走——以前这会让轮切板
+  // 卡在固定模式里。
   fireWindow(web, 'keydown', keyEvent({ code: 'ControlLeft', key: 'Control', altKey: true, ctrlKey: true }));
   fireWindow(web, 'keydown', keyEvent({ code: 'ShiftLeft', key: 'Shift', altKey: true, ctrlKey: true, shiftKey: true }));
   fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', altKey: true, ctrlKey: true, shiftKey: true }));
@@ -789,8 +789,8 @@ test('a pinned browser board opens deliberately and then steps with a plain key'
   const opened = selectedAt(web);
   fireWindow(web, 'keyup', keyEvent({ code: 'KeyQ', key: 'q' }));
   fireWindow(web, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
-  // A pinned board waits for the user, so the bare key steps and Shift reverses
-  // even with no modifier held — otherwise it felt stuck until Ctrl+Alt was held.
+  // 固定板在等用户，所以即使不按修饰键，裸键也走一步、Shift 反向——
+  // 否则会让人以为卡住，直到按住 Ctrl+Alt 才有反应。
   fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q' }));
   assert.notEqual(selectedAt(web), opened);
   fireWindow(web, 'keydown', keyEvent({ code: 'KeyQ', key: 'q', shiftKey: true }));
@@ -807,12 +807,12 @@ test('the open board holds the desktop keyboard capture and moves itself', async
   visitBoard(environment, ['s2', 's3', 's1']);
   environment.actions.length = 0;
   boardCommand(environment).resolve({ modal: null }).run();
-  // The window menu keeps the Alt release to itself, so the board asks the
-  // desktop bridge to stop honouring menu mnemonics while it is open.
+  // 窗口菜单独占了 Alt 抬起，所以轮切板打开时会请求
+  // 桌面桥接暂停响应菜单助记键。
   assert.deepEqual(environment.captureCalls, [true]);
   await Promise.resolve();
-  // With the capture held the native dispatcher stays quiet: the recorded base
-  // key steps forward and Shift reverses it.
+  // 捕获保持期间原生分发器保持安静：录制到的基础键
+  // 向前走一步，Shift 使其反向。
   fireWindow(environment, 'keydown', keyEvent({ code: 'KeyQ', altKey: true }));
   assert.deepEqual(cardsOf(boardNode(environment)).map((card) => card.props['aria-selected']),
     [false, false, true]);
@@ -830,14 +830,14 @@ test('a fast tap switches like Alt+Tab even before the capture lands', async () 
   visitBoard(environment, ['s2', 's3', 's1']);
   environment.actions.length = 0;
   boardCommand(environment).resolve({ modal: null }).run();
-  // Alt+Q released at once: the Alt release never reaches the document, but the
-  // base key's own release still does, so the tap commits to the last session.
+  // 同时松开 Alt+Q：Alt 抬起到不了文档，但基础键自身的
+  // 抬起仍会到达，因此这次点按提交到最后一个会话。
   fireWindow(environment, 'keyup', keyEvent({ code: 'KeyQ', key: 'q' }));
   assert.deepEqual(environment.actions, ['open:s3']);
   assert.equal(boardOpen(environment), false);
   await Promise.resolve();
-  // The late confirmation is handed straight back instead of leaving the window
-  // in recording mode.
+  // 迟到的确认被直接交还，而不是让窗口
+  // 留在录制模式里。
   assert.deepEqual(environment.captureCalls, [true, false]);
   for (const off of environment.disposed.reverse()) off();
 });
@@ -850,7 +850,7 @@ test('the switcher is a rectangle that grows wider then wraps into rows', () => 
   visitBoard(environment, ['s2', 's3']);
   boardCommand(environment).resolve({ modal: null }).run();
   const narrow = panelOf(environment);
-  // Three candidates: a single row, shaped to the count instead of a fixed strip.
+  // 三个候选：单行，按数量塑形，而不是固定条带。
   assert.equal(narrow.props.style.gridTemplateColumns, 'repeat(3, 190px)');
   assert.equal(narrow.props.style.maxHeight, 124);
   assert.equal(narrow.props.style.overflowY, 'hidden');
@@ -866,7 +866,7 @@ test('the switcher is a rectangle that grows wider then wraps into rows', () => 
   visitBoard(wide, ['s2', 's3', 's4', 's5', 's6', 's7', 's8', 's9']);
   boardCommand(wide).resolve({ modal: null }).run();
   const grid = panelOf(wide);
-  // Nine candidates: the row stops at five cards and the rest wrap underneath.
+  // 九个候选：该行在五张卡片处停住，其余折到下面。
   assert.equal(grid.props.style.gridTemplateColumns, 'repeat(5, 190px)');
   assert.equal(grid.props.style.maxHeight, 228);
   assert.equal(cardsOf(grid).length, 9);
@@ -878,12 +878,12 @@ test('a tap whose release arrives before the board opens still switches', () => 
   environment.catalog.push({ id: 'kana.shortcuts.session-board', binding: { code: 'KeyQ', modifiers: ['alt'] } });
   visitBoard(environment, ['s2', 's3', 's1']);
   environment.actions.length = 0;
-  // The native dispatcher is slower than the fingers: both keys are already up
-  // by the time this document is told the base key was pressed.
+  // 原生分发器比手指慢：等本文档被告知基础键已按下时，
+  // 两个键早就都松开了。
   fireWindow(environment, 'keydown', keyEvent({ code: 'KeyQ', altKey: true }));
   fireWindow(environment, 'keyup', keyEvent({ code: 'KeyQ', key: 'q' }));
   boardCommand(environment).resolve({ modal: null }).run();
-  // No board is opened - nobody could close it - the switch happens directly.
+  // 不打开轮切板——没人能关闭它——直接切换。
   assert.equal(boardOpen(environment), false);
   assert.deepEqual(environment.actions, ['open:s3']);
   for (const off of environment.disposed.reverse()) off();
@@ -894,14 +894,14 @@ test('the main-process shell, which hides the base keydown, still reads a finish
   environment.catalog.push({ id: 'kana.shortcuts.session-board', binding: { code: 'KeyQ', modifiers: ['alt'] } });
   visitBoard(environment, ['s2', 's3', 's1']);
   environment.actions.length = 0;
-  // DSH NEXT resolves the shortcut in the main process, which preventDefaults
-  // the matched keydown: this document never sees the press. Only the Alt
-  // release reaches the page, and the command lands milliseconds later.
+  // DSH NEXT 在主进程解析快捷键，对匹配的 keydown 调用
+  // preventDefault：本文档永远看不到这次按下。只有 Alt
+  // 抬起到达页面，命令在几毫秒后落地。
   fireWindow(environment, 'keyup', keyEvent({ code: 'AltLeft', key: 'Alt' }));
   boardCommand(environment).resolve({ modal: null }).run();
   assert.equal(boardOpen(environment), false);
   assert.deepEqual(environment.actions, ['open:s3']);
-  // The gesture is consumed, so a deliberate second press opens the board.
+  // 手势已被消费，所以刻意再按一次会打开轮切板。
   environment.actions.length = 0;
   boardCommand(environment).resolve({ modal: null }).run();
   assert.equal(boardOpen(environment), true);
@@ -913,15 +913,15 @@ test('session board cycles every card, including the conversation the user is in
   visitBoard(environment, ['s2', 's3', 's1']);
   environment.actions.length = 0;
   boardCommand(environment).resolve({ modal: null }).run();
-  // "Previous session" is the first stop; one step back from there reaches the
-  // conversation already open, so committing must not reload it.
+  // 「上一个会话」是第一站；从那里再退一步就到达
+  // 已经打开的会话，因此提交时绝不能重新加载它。
   assert.equal(boardCommand(environment, '-back').resolve({ modal: null }).status, 'handled');
   boardCommand(environment, '-back').resolve({ modal: null }).run();
   fireWindow(environment, 'keyup', keyEvent({ code: 'AltRight', key: 'Alt' }));
   assert.deepEqual(environment.actions, []);
 
-  // Two steps back wrap past the current conversation onto the oldest one, which
-  // is what lets a long enough run come back to where the user started.
+  // 退两步会绕过当前会话落到最旧的会话，这正是
+  // 足够长的一串操作能回到用户起点的原因。
   environment.actions.length = 0;
   boardCommand(environment).resolve({ modal: null }).run();
   boardCommand(environment, '-back').resolve({ modal: null }).run();
@@ -951,7 +951,7 @@ test('pinned board outlives the Alt release and opens only on Enter', () => {
   fireWindow(environment, 'keydown', keyEvent({ code: 'Enter' }));
   assert.deepEqual(environment.actions, ['open:s2']);
 
-  // Pressing the combination again cancels the pinned board without opening.
+  // 再次按下该组合会取消固定板，而不打开它。
   environment.actions.length = 0;
   boardCommand(environment, '-pin').resolve({ modal: null }).run();
   boardCommand(environment, '-pin').resolve({ modal: null }).run();
@@ -974,13 +974,13 @@ test('the current conversation anchors the board and cannot be dropped', () => {
     return { badge: badge?.children?.[0] ?? null, hasRemove: footer.children[1] != null };
   });
 
-  // Exactly one card is the current conversation, and it carries no remove control.
+  // 恰好一张卡片是当前会话，且它不带移除控件。
   const before = markers(cardsOf(node));
   assert.equal(before.filter((card) => !card.hasRemove).length, 1);
   assert.equal(before[0].hasRemove, false);
   assert.equal(before.slice(1).every((card) => card.hasRemove), true);
 
-  // Delete only ever targets the highlighted candidate, never the anchor.
+  // 删除只针对高亮的候选，绝不针对锚点。
   fireWindow(environment, 'keydown', keyEvent({ code: 'Delete', altKey: true }));
   const after = markers(cardsOf(boardNode(environment)));
   assert.equal(after.length, 2);
@@ -996,8 +996,8 @@ test('Delete drops a candidate without archiving it, and revisiting restores it'
   environment.actions.length = 0;
   boardCommand(environment).resolve({ modal: null }).run();
   fireWindow(environment, 'keydown', keyEvent({ code: 'Delete', altKey: true }));
-  // Only the current conversation is left, so the board closes with a hint and
-  // the real conversation list is untouched.
+  // 只剩当前会话，于是轮切板带着提示关闭，
+  // 真实会话列表不受影响。
   assert.equal(boardNode(environment).props['data-kana-session-board'], 'hint');
   assert.deepEqual(environment.sessionList.ids, ['s1', 's2', 's3']);
   assert.deepEqual(environment.actions, []);
@@ -1043,7 +1043,7 @@ test('board recorder takes an Alt-only combination and saves all three derivativ
   const up = environment.documentListeners.get('keyup');
   assert.ok(down && up);
 
-  // The ordinary recorder's Ctrl+Alt constraint still applies here: reject it.
+  // 普通录制器的 Ctrl+Alt 约束在此依旧适用：拒绝它。
   down(keyEvent({ code: 'KeyK', altKey: true, ctrlKey: true }));
   assert.equal(environment.stateUpdates.at(-1).index, 8);
   up(keyEvent({ code: 'KeyK', altKey: true, ctrlKey: true }));
@@ -1052,8 +1052,8 @@ test('board recorder takes an Alt-only combination and saves all three derivativ
   down(keyEvent({ code: 'KeyK', altKey: true }));
   up(keyEvent({ code: 'KeyK', altKey: true }));
   await flush();
-  // The renderer runs in its own VM realm, so compare the serialized operations
-  // instead of relying on cross-realm prototype identity.
+  // 渲染器运行在独立的 VM realm 中，因此比较序列化后的操作，
+  // 而不是依赖跨 realm 的原型同一性。
   assert.deepEqual(environment.edits.map((entry) => JSON.stringify(entry.operation)), [
     JSON.stringify({ type: 'set', id: 'kana.shortcuts.session-board', binding: { code: 'KeyK', modifiers: ['alt'] } }),
     JSON.stringify({ type: 'set', id: 'kana.shortcuts.session-board-back', binding: { code: 'KeyK', modifiers: ['alt', 'shift'] } }),
@@ -1074,15 +1074,15 @@ test('board binding save writes nothing when a derived combination is taken', as
   environment.documentListeners.get('keyup')(keyEvent({ code: 'KeyK', altKey: true }));
   await flush();
   assert.deepEqual(environment.edits, []);
-  // The conflict is reported through the dedicated board status line.
+  // 冲突通过专有的轮切板状态行报告。
   assert.equal(environment.stateUpdates.some((update) => update.index === 8), true);
   for (const off of environment.disposed.reverse()) off();
 });
 
 test('a browser opens the board with a bare Alt+Q although DSH cannot store that row', () => {
-  // bindingIssue() answers "unsupported-browser" for an Alt-only combination on
-  // the Web runtime, so the base row can never be persisted there. The gesture
-  // is read from this document, and the letter defaults to Q.
+  // 在 Web 运行时上，bindingIssue() 对仅 Alt 的组合返回
+  // "unsupported-browser"，所以基础行在那里永远无法持久化。手势
+  // 从本文档读取，字母默认为 Q。
   const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
   assert.equal(web.catalog.length, 0);
   visitBoard(web, ['s2', 's1']);
@@ -1098,8 +1098,8 @@ test('a browser opens the board with a bare Alt+Q although DSH cannot store that
 });
 
 test('a browser derives the bare Alt gesture from the one board row it can store', () => {
-  // Only the Ctrl+Alt variant is savable on Web; the letter it carries is what
-  // the bare Alt gesture must use, so a re-recorded Alt+W reaches the board.
+  // 在 Web 上只有 Ctrl+Alt 变体可保存；它携带的字母正是
+  // 裸 Alt 手势必须使用的，因此重录的 Alt+W 能到达轮切板。
   const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
   web.catalog.push({ id: 'kana.shortcuts.session-board-pin',
     binding: { code: 'KeyW', modifiers: ['control', 'alt'] } });
@@ -1128,8 +1128,8 @@ test('a browser board recorder saves only the variant the Web runtime accepts', 
   web.documentListeners.get('keydown')(keyEvent({ code: 'KeyK', altKey: true }));
   web.documentListeners.get('keyup')(keyEvent({ code: 'KeyK', altKey: true }));
   await flush();
-  // Writing the Alt-only rows would be refused by DSH and fail the whole save,
-  // so the browser stores the derived Ctrl+Alt row and keeps the rest local.
+  // 写入仅 Alt 的行会被 DSH 拒绝并导致整次保存失败，
+  // 所以浏览器存储派生出的 Ctrl+Alt 行，其余保留在本地。
   assert.deepEqual(web.edits.map((entry) => JSON.stringify(entry.operation)), [
     JSON.stringify({ type: 'set', id: 'kana.shortcuts.session-board-pin',
       binding: { code: 'KeyK', modifiers: ['control', 'alt'] } }),
@@ -1138,14 +1138,14 @@ test('a browser board recorder saves only the variant the Web runtime accepts', 
 });
 
 test('board settings stay out of the ordinary action list', () => {
-  // Plain Web hosts the board too, so its settings page carries the Alt-only
-  // recorder as well.
+  // 纯 Web 也承载轮切板，因此其设置页同样带有仅 Alt 的
+  // 录制器。
   const web = load({ mode: null, bridge: false, official: false, runtime: 'web' });
   assert.equal(descendants(web.slots[0].component())
     .some((node) => node.props?.['data-kana-board-settings'] !== undefined), true);
   for (const off of web.disposed.reverse()) off();
 
-  // Community Desktop hosts the board too, so it shows the board settings.
+  // 社区 Desktop 也承载轮切板，因此会显示轮切板设置。
   const community = load({ bridge: true, mode: 'advanced', runtime: 'web' });
   assert.equal(descendants(community.slots[0].component())
     .some((node) => node.props?.['data-kana-board-settings'] !== undefined), true);
@@ -1155,7 +1155,7 @@ test('board settings stay out of the ordinary action list', () => {
   const settings = environment.slots[0].component();
   assert.equal(descendants(settings).some((node) => node.props?.['data-kana-board-settings'] !== undefined), true);
   const select = descendants(settings).find((node) => node.type === 'select');
-  // createElement receives the mapped options as a single child array.
+  // createElement 接收映射后的选项，作为单个子节点数组。
   assert.equal(select.children[0].length, 15);
   assert.equal(select.children[0].some((option) => option.children[0] === 'board'), false);
   for (const off of environment.disposed.reverse()) off();
