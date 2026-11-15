@@ -133,9 +133,8 @@ window.__ModuleLoader__.load({
       // 仅限桌面的辅助判断都为 false。快捷键服务在这里仍会分发按键，
       // 而会话、输入框相关的动作是纯客户端状态，因此照常可用——
       // 只有需要桌面壳的能力（开发者工具、固定的功能页数字键、
-      // 菜单快捷键捕获）保持关闭。这里刻意以“桥接缺失”为判据，
-      // 而不是以“无法识别的桌面模式”为判据：处于未知模式的
-      // 桌面壳必须保持不生效，
+      // 菜单快捷键捕获）保持关闭。判据取“桥接缺失”，而不是
+      // “无法识别的桌面模式”：未知模式的桌面壳必须保持不生效，
       // 而不是悄悄退化成 Web 的行为。
       const webReady = () => !officialReady() && !bridgeReady() && typeof window !== 'undefined';
       const pageReady = () => officialReady() || desktopReady() || webReady();
@@ -274,10 +273,9 @@ window.__ModuleLoader__.load({
       // 因此该文档能看到整个手势；而 DSH NEXT 在主进程中解析，
       // 它会对匹配到的 keydown 调用 `preventDefault()`，然后
       // 经由 IPC 往返。在那里基础键的 keydown 根本到不了页面，
-      // 这次已完成的点按唯一留下的痕迹就是 Alt 抬起。对这条
-      // 盲路径要把时间窗收得很紧：IPC 往返只有几毫秒，
-      // 所以比时间窗更早的抬起意味着 Alt 仍被按住，
-      // 轮切板必须真正打开。
+      // 这次已完成的点按只剩一个痕迹——Alt 抬起。对这条盲路径
+      // 时间窗必须收得很紧：IPC 往返只有几毫秒，因此比时间窗
+      // 更早的抬起意味着 Alt 仍被按住，轮切板必须真正打开。
       const tapAlreadyReleased = () => {
         const upAt = Math.max(keyWatch.baseUpAt, keyWatch.altUpAt);
         if (upAt === 0) return false;
@@ -1376,7 +1374,7 @@ window.__ModuleLoader__.load({
         },
         React.createElement('div', {
           role: 'listbox', 'aria-label': t('boardTitle'),
-          // 一个随会话数量增长、形似 Windows 切换器的矩形：
+          // 一个随会话数量增长、类似 Windows Alt+Tab 切换器的矩形：
           // 放得下时只有一行，之后增加行。它绝不会
           // 超过最大尺寸；更多卡片纵向滚动，
           // 高亮会被滚动到可见处，因此仅靠键盘就足够。
