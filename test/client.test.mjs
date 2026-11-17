@@ -26,8 +26,11 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
   const selectedListeners = new Set();
   const listListeners = new Set();
   const workspaceListeners = new Set();
+  const sessionStatus = new Map();
+  const statusListeners = new Set();
+  const remoteHandlers = new Map();
   const sessionRows = Object.fromEntries(['s1', 's2', 's3'].map((id, index) =>
-    [id, { id, origin: 'root', blank: false, updatedAt: 3 - index, retainedBy: { mainView: index === 0 ? 1 : 0 } }]));
+    [id, { id, origin: 'root', blank: false, updatedAt: Date.now(), retainedBy: { mainView: index === 0 ? 1 : 0 } }]));
   const sessionList = { phase: 'ready', ids: ['s1', 's2', 's3'], byId: sessionRows };
   const workspaceList = { phase: 'ready', archivedSessionIds: [], items: [{ sessionIds: sessionList.ids }] };
   const focusedShell = { editor: { getRootElement() { return {}; } }, focus() { actions.push('focus'); } };
@@ -145,7 +148,15 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
       binding(id) { return id === selected.key ? { ctx: sessionCtx } : undefined; },
     },
     uiSession: { adapter: { current: { getSnapshot() { return selected; },
-      subscribe(listener) { selectedListeners.add(listener); return () => selectedListeners.delete(listener); } } } },
+      subscribe(listener) { selectedListeners.add(listener); return () => selectedListeners.delete(listener); } } },
+      sessionStatus: { getSnapshot() { return sessionStatus; },
+        subscribe(listener) { statusListeners.add(listener); return () => statusListeners.delete(listener); } } },
+    remote: { $on(type, listener) {
+      let handlers = remoteHandlers.get(type);
+      if (!handlers) { handlers = new Set(); remoteHandlers.set(type, handlers); }
+      handlers.add(listener);
+      return () => handlers.delete(listener);
+    } },
     uiWorkspace: { openSession(id) {
       if (!sessionRows[id]) throw new Error('unknown session');
       selected.key = id;
@@ -191,6 +202,7 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
   return { commands, slots, actions, disposed, edits, catalog, document, observers, stateUpdates,
     fixedInputs, frames, sidebarPanels, mainPanels, slotListeners, fixedRows, panelInfo,
     selected, selectedListeners, sessionList, sessionRows, listListeners, workspaceList, workspaceListeners,
+    sessionStatus, statusListeners, remoteHandlers,
     scrollAttributes, documentListeners, windowListeners, captureCalls };
 }
 
@@ -597,6 +609,11 @@ const keyEvent = (event) => ({ altKey: false, ctrlKey: false, shiftKey: false, m
 const flush = () => new Promise((resolve) => setImmediate(resolve));
 
 const cardsOf = (node) => descendants(node).filter((child) => child.props?.role === 'option');
+
+// 每张卡片上状态点的语义值；没有点就是 'none'。
+const dotsOf = (environment) => new Map(cardsOf(boardNode(environment)).map((card) => [card.props.key,
+  descendants(card).find((child) => child.props?.['data-kana-session-dot'])
+    ?.props['data-kana-session-dot'] ?? 'none']));
 
 test('session board is offered on the community and NEXT Windows shells and on plain Web Windows', () => {
   // 纯 Web 没有窗口菜单会吞掉 Alt 抬起，因此那里无需
@@ -1253,4 +1270,69 @@ test('the official shell offers no board recording and warns about one it finds'
   const clear = descendants(board).find((node) => node.type === 'button' && node.children[0] === 'clear');
   assert.equal(clear.props.disabled, false);
   for (const off of recorded.disposed.reverse()) off();
+});
+
+test('the board paints the official session states on each card', () => {
+  const environment = load(nextWindows);
+  visitBoard(environment, ['s2', 's3', 's1']);
+  environment.sessionStatus.set('s1', { running: false, completionUnread: true });
+  environment.sessionStatus.set('s2', { running: false, completionUnread: false,
+    pendingInteraction: { key: 'kana:s2', kind: 'approval', sessionId: 's2' } });
+  environment.sessionStatus.set('s3', { running: true, completionUnread: false });
+  boardCommand(environment, '-pin').resolve({ modal: null }).run();
+  const dots = dotsOf(environment);
+  // 等你回复优先于「跑完待续」：那张卡片其实也在等你。
+  assert.equal(dots.get('s2'), 'waiting');
+  assert.equal(dots.get('s3'), 'running');
+  assert.equal(dots.get('s1'), 'done');
+  assert.equal(boardOpen(environment), true);
+
+  // 状态点在板子开着时自己更新，不需要重新开板。
+  environment.sessionStatus.set('s3', { running: false, completionUnread: true });
+  for (const listener of environment.statusListeners) listener();
+  assert.equal(dotsOf(environment).get('s3'), 'done');
+  for (const off of environment.disposed.reverse()) off();
+});
+
+test('a failed turn turns its card red until the conversation is opened', () => {
+  const environment = load(nextWindows);
+  visitBoard(environment, ['s2', 's3', 's1']);
+  // 回合开着却没在跑：崩溃或被断线打断，`turn/end` 从未写入。
+  environment.sessionRows.s3.projectionValues = { turnBoundary: { openTurnStartSeq: 7 } };
+  boardCommand(environment, '-pin').resolve({ modal: null }).run();
+  assert.equal(dotsOf(environment).get('s3'), 'error');
+
+  // 活着跑起来的同一条会话不该继续标红。
+  environment.sessionStatus.set('s3', { running: true, completionUnread: false });
+  for (const listener of environment.statusListeners) listener();
+  assert.equal(dotsOf(environment).get('s3'), 'running');
+
+  // 主机推来的失败消息同样标红，打开会话即清除。
+  for (const listener of environment.remoteHandlers.get('api-session/error') ?? []) {
+    listener('s2', 'LLM failed');
+  }
+  assert.equal(dotsOf(environment).get('s2'), 'error');
+  const failed = cardsOf(boardNode(environment)).find((card) => card.props.key === 's2');
+  failed.props.onClick();
+  assert.ok(environment.actions.includes('open:s2'));
+  boardCommand(environment, '-pin').resolve({ modal: null }).run();
+  assert.equal(dotsOf(environment).get('s2'), 'none');
+  for (const off of environment.disposed.reverse()) off();
+});
+
+test('a conversation nobody touched for a day greys out, a fresh one does not', () => {
+  const environment = load(nextWindows);
+  visitBoard(environment, ['s2', 's3', 's1']);
+  environment.sessionRows.s3.updatedAt = Date.now() - (25 * 60 * 60 * 1000);
+  boardCommand(environment, '-pin').resolve({ modal: null }).run();
+  const dots = dotsOf(environment);
+  assert.equal(dots.get('s3'), 'idle');
+  // 刚说过话的会话不能因为「今天没跑完」就被涂灰。
+  assert.equal(dots.get('s2'), 'none');
+  assert.equal(dots.get('s1'), 'none');
+  // 长时间没人理也不该盖掉真正的状态。
+  environment.sessionStatus.set('s3', { running: false, completionUnread: true });
+  for (const listener of environment.statusListeners) listener();
+  assert.equal(dotsOf(environment).get('s3'), 'done');
+  for (const off of environment.disposed.reverse()) off();
 });

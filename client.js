@@ -25,6 +25,10 @@ window.__ModuleLoader__.load({
         text: 'var(--dsw-alias-label-primary)', secondary: 'var(--dsw-alias-label-secondary)',
         surface: 'var(--dsw-alias-bg-layer-2)', border: 'var(--dsw-alias-border-l1)',
         accent: 'var(--dsw-alias-brand-primary)', error: 'var(--dsw-alias-state-error-primary)',
+        // 与 DSH 侧边栏状态点同一套语义色。
+        warning: 'var(--dsw-alias-state-warn-primary)',
+        success: 'var(--dsw-alias-state-success-primary)',
+        idle: 'var(--dsw-alias-state-idle-primary)',
       };
       const dictionaries = {
         zh: {
@@ -54,6 +58,9 @@ window.__ModuleLoader__.load({
           boardRemove: '从本次候选移除',
           boardTransientHint: '按住 Alt 连按切换 · 松开 Alt 打开高亮会话 · Esc 取消 · Delete 移除',
           boardPinnedHint: 'Enter 或点击打开 · 基础键前进、Shift+基础键后退 · Esc 取消 · Delete 移除',
+          boardStatusWaiting: '等你回复', boardStatusRunning: '正在运行',
+          boardStatusDone: '已完成，等你继续', boardStatusError: '意外中止',
+          boardStatusIdle: '很久没有动静',
           boardNone: '本次启动还没有可轮切的会话：请先访问至少两个会话。',
           boardFocus: '当前焦点在内嵌网页里，无法确认 Alt 松开；请先点回会话内容再按。',
           boardGone: '高亮的会话已不可用，已取消切换。',
@@ -97,6 +104,9 @@ window.__ModuleLoader__.load({
           boardRemove: 'Remove from this launch',
           boardTransientHint: 'Hold Alt and tap to move · release Alt to open · Esc cancels · Delete removes',
           boardPinnedHint: 'Enter or click to open · base key steps, Shift reverses · Esc cancels · Delete removes',
+          boardStatusWaiting: 'Waiting for your reply', boardStatusRunning: 'Running',
+          boardStatusDone: 'Done — ready for your next turn', boardStatusError: 'Stopped unexpectedly',
+          boardStatusIdle: 'Idle for a long time',
           boardNone: 'No conversations to switch between in this launch: visit at least two first.',
           boardFocus: 'Focus is inside an embedded page, so the Alt release cannot be observed; click back into the conversation first.',
           boardGone: 'The highlighted conversation is no longer available; nothing was opened.',
@@ -227,8 +237,13 @@ window.__ModuleLoader__.load({
         syncRecent();
         return () => { offWorkspaces(); offList(); offCurrent(); cycle = null; recentIds = []; };
       }, 'kana shortcuts: recent conversation history');
+      // 红色「意外中止」没有官方投影：主机只在非回合位置的失败上
+      // 发 `api-session/error`，回合内的硬失败也走这条通道，
+      // 所以这里按会话记下最近一次失败；打开该会话就清掉。
+      const sessionErrors = new Map();
       const openVisibleSession = (id) => {
         if (!visibleSessionIds().includes(id)) return false;
+        sessionErrors.delete(id);
         try { ctx.uiWorkspace.openSession(id); return true; }
         catch (error) {
           console.error('kana-desktop-shortcuts: session navigation failed', error);
@@ -357,10 +372,59 @@ window.__ModuleLoader__.load({
       };
       const boardSnapshot = () => board.snapshot;
       const baseName = (path) => String(path ?? '').replace(/[/\\]+$/u, '').split(/[/\\]/u).pop() ?? '';
+      // 状态点的语义与官方侧边栏一致，另外补上板子上才需要的两种：
+      //   等你回复（黄） / 正在跑（空心环） / 跑完待续（绿）
+      //   意外中止（红） / 很久没动静（灰）
+      const boardIdleAfterMs = 24 * 60 * 60 * 1000;
+      const boardErrorTtlMs = 30 * 60 * 1000;
+      // `uiSession.sessionStatus` 是官方的主机可观察量；老版本没有它，
+      // 那就只剩列表行可用，点自然退化成「无点」。
+      const sessionStatusMap = () => {
+        try { return ctx.uiSession.sessionStatus?.getSnapshot?.() ?? null; }
+        catch { return null; }
+      };
+      const sessionDot = (id, row, now, statuses) => {
+        const status = statuses?.get?.(id);
+        if (status?.pendingInteraction) return 'waiting';
+        if (status?.running === true) return 'running';
+        const failure = sessionErrors.get(id);
+        if (failure && now - failure.at <= boardErrorTtlMs) return 'error';
+        // 回合开着却没有在跑：进程崩了或断了线，`turn/end` 从没写过。
+        if (row?.projectionValues?.turnBoundary?.openTurnStartSeq != null) return 'error';
+        if (status?.completionUnread === true) return 'done';
+        const updatedAt = Number(row?.updatedAt);
+        if (Number.isFinite(updatedAt) && updatedAt > 0 && now - updatedAt > boardIdleAfterMs) return 'idle';
+        return 'none';
+      };
+      // 点的颜色直接用官方语义令牌；运行中画成空心环，与实心的
+      // 黄/绿/红/灰区分开，不依赖动画也能一眼分开。
+      const dotColors = {
+        waiting: colors.warning, running: colors.accent, done: colors.success,
+        error: colors.error, idle: colors.idle,
+      };
+      const dotLabels = {
+        waiting: 'boardStatusWaiting', running: 'boardStatusRunning', done: 'boardStatusDone',
+        error: 'boardStatusError', idle: 'boardStatusIdle',
+      };
+      const sessionDotLabel = (dot) => (dot && dot !== 'none' && dotLabels[dot] ? t(dotLabels[dot]) : '');
+      const sessionDotNode = (dot) => {
+        const color = dotColors[dot];
+        if (!dot || dot === 'none' || !color) return null;
+        const label = t(dotLabels[dot]);
+        return React.createElement('span', {
+          'data-kana-session-dot': dot, role: 'img', 'aria-label': label, title: label,
+          style: dot === 'running'
+            ? { width: 8, height: 8, flex: 'none', boxSizing: 'border-box', borderRadius: '50%',
+              border: `2px solid ${color}`, background: 'transparent' }
+            : { width: 8, height: 8, flex: 'none', borderRadius: '50%', background: color },
+        });
+      };
       const boardCards = (ids) => {
         const list = ctx.sessions.list.getSnapshot();
         const groups = ctx.workspaces.list.getSnapshot().items ?? [];
         const current = currentSessionId();
+        const now = Date.now();
+        const statuses = sessionStatusMap();
         return ids.map((id) => {
           const row = list.byId[id];
           const group = groups.find((item) => Array.isArray(item.sessionIds) && item.sessionIds.includes(id));
@@ -370,6 +434,7 @@ window.__ModuleLoader__.load({
             title: row?.title?.trim() || t('boardUntitled'),
             workspace: group?.title?.trim() || baseName(path) || t('boardNoWorkspace'),
             current: id === current,
+            dot: sessionDot(id, row, now, statuses),
           };
         });
       };
@@ -379,6 +444,27 @@ window.__ModuleLoader__.load({
           : { mode: board.mode, index: board.index, cards: boardCards(board.ids), hint: board.hint };
         for (const listener of [...board.listeners]) listener();
       };
+      // 状态点要自己动起来：主机推来的 status/error 只会更新会话状态，
+      // 不会自动带来一次重绘，所以板子开着时手动重发快照。
+      ctx.effect(() => {
+        const refresh = () => {
+          const statuses = sessionStatusMap();
+          if (statuses) {
+            for (const [id, status] of statuses) if (status?.running === true) sessionErrors.delete(id);
+          }
+          if (board.mode !== null) publishBoard();
+        };
+        const offStatus = ctx.uiSession.sessionStatus?.subscribe?.(refresh);
+        const offRemote = ctx.remote?.$on?.('api-session/error', (sessionId, message) => {
+          if (typeof sessionId !== 'string') return;
+          sessionErrors.set(sessionId, { message: String(message ?? ''), at: Date.now() });
+          refresh();
+        });
+        return () => {
+          if (typeof offStatus === 'function') offStatus();
+          if (typeof offRemote === 'function') offRemote();
+        };
+      }, 'kana shortcuts: session status dots');
       const boardHint = (message) => {
         board.hint = message;
         publishBoard();
@@ -1429,7 +1515,9 @@ window.__ModuleLoader__.load({
             boxShadow: '0 18px 48px rgb(0 0 0 / 0.35)' },
         }, state.cards.map((card, index) => React.createElement('div', {
           key: card.id, role: 'option', 'aria-selected': index === state.index,
-          'aria-label': `${card.title} — ${card.workspace}`,
+          'aria-label': sessionDotLabel(card.dot)
+            ? `${card.title} — ${card.workspace} — ${sessionDotLabel(card.dot)}`
+            : `${card.title} — ${card.workspace}`,
           ref: (node) => { cardRefs.current[index] = node; },
           onClick: () => { board.index = index; commitBoard(); },
           style: { display: 'flex', flexDirection: 'column', gap: 6, minWidth: 0,
@@ -1438,8 +1526,10 @@ window.__ModuleLoader__.load({
             border: `2px solid ${index === state.index ? colors.accent : colors.border}`,
             background: 'var(--dsw-alias-bg-layer-1)' },
         },
-        React.createElement('div', { style: { fontSize: 13, fontWeight: 600, color: colors.text,
+        React.createElement('div', { style: { display: 'flex', alignItems: 'center', gap: 6, minWidth: 0 } },
+        React.createElement('div', { style: { flex: 1, minWidth: 0, fontSize: 13, fontWeight: 600, color: colors.text,
           overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, card.title),
+        sessionDotNode(card.dot)),
         React.createElement('div', { style: { fontSize: 12, color: colors.secondary, overflow: 'hidden',
           textOverflow: 'ellipsis', whiteSpace: 'nowrap' } }, card.workspace),
         React.createElement('div', { style: { display: 'flex', alignItems: 'center',
