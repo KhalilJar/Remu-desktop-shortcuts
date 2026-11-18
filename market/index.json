@@ -74,15 +74,7 @@
       "versions": [
         {
           "version": "0.4.19",
-          "publishTimestamp": 1794978404,
-          "source": {
-            "type": "npm"
-          },
-          "engines": {}
-        },
-        {
-          "version": "0.4.18",
-          "publishTimestamp": 1794757062,
+          "publishTimestamp": 1794982396,
           "source": {
             "type": "npm"
           },
