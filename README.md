@@ -179,6 +179,12 @@ git clone https://github.com/KhalilJar/Remu-desktop-shortcuts.git
 - 修复 0.4.18 在真实 DSH Web 里整块加载失败（`web boot: 1 entry did not activate`）：0.4.18 直接读 `ctx.remote` 收实时错误，但 `remote` 没写进 `inject`，Cordis 的 ctx 代理会**抛错**（`cannot get property "remote" without inject`），`?.` 拦不住，整个插件停在未激活。现在改用 `ctx.inject(['remote'], …)`：服务就绪后再订阅，缺它也只是少一个红点，不会拖垮加载；所有订阅统一包 try/catch。
 - 新增一条回归测试：模拟 Cordis 的抛错代理，扫出插件真正访问过的客户端服务，逐一核对是否都在 `inject` 里；少声明就直接失败。
 
+状态点实机效果（上方两张图）：左侧卡片右上角的**黄色圆点**表示有方案/审批在等你回复，**绿色圆点**表示那一轮已经跑完、在等你开下一轮。
+
+![等待回复：卡片右上角黄点](docs/session-board-status-waiting.png)
+
+![跑完待续：卡片右上角绿点](docs/session-board-status-done.png)
+
 ### 0.4.18
 
 - 轮切板每张卡片加一个会话状态点，语义与 DSH 侧边栏一致，另外补上两种板子才需要的状态：**黄色**=有方案/审批在等你回复，**空心蓝环**=正在跑，**绿色**=跑完在等你开下一轮，**红色**=这一轮意外中止（`api-session/error` 或回合开着却没在跑），**灰色**=超过 24 小时没有任何动静。
