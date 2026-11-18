@@ -446,25 +446,31 @@ window.__ModuleLoader__.load({
       };
       // 状态点要自己动起来：主机推来的 status/error 只会更新会话状态，
       // 不会自动带来一次重绘，所以板子开着时手动重发快照。
+      // 订阅一律走 try/catch：缺服务时 cordis 的 ctx 代理是**抛错**而不是返回
+      // undefined，`?.` 兜不住，整个插件会因此激活失败。
+      const trySubscribe = (subscribe) => { try { return subscribe() ?? null; } catch { return null; } };
+      const refreshBoard = () => {
+        const statuses = sessionStatusMap();
+        if (statuses) {
+          for (const [id, status] of statuses) if (status?.running === true) sessionErrors.delete(id);
+        }
+        if (board.mode !== null) publishBoard();
+      };
       ctx.effect(() => {
-        const refresh = () => {
-          const statuses = sessionStatusMap();
-          if (statuses) {
-            for (const [id, status] of statuses) if (status?.running === true) sessionErrors.delete(id);
-          }
-          if (board.mode !== null) publishBoard();
-        };
-        const offStatus = ctx.uiSession.sessionStatus?.subscribe?.(refresh);
-        const offRemote = ctx.remote?.$on?.('api-session/error', (sessionId, message) => {
+        const offStatus = trySubscribe(() => ctx.uiSession.sessionStatus?.subscribe?.(refreshBoard));
+        return () => { if (typeof offStatus === 'function') offStatus(); };
+      }, 'kana shortcuts: session status dots');
+      // `remote` 不能写进 inject：缺这个服务的宿主会让整个插件停在未激活状态。
+      // 用 `ctx.inject` 起一个子 fiber，服务就绪后再订阅，缺了也只是少了红色。
+      const onRemote = (child) => {
+        const offRemote = trySubscribe(() => child.remote.$on('api-session/error', (sessionId, message) => {
           if (typeof sessionId !== 'string') return;
           sessionErrors.set(sessionId, { message: String(message ?? ''), at: Date.now() });
-          refresh();
-        });
-        return () => {
-          if (typeof offStatus === 'function') offStatus();
-          if (typeof offRemote === 'function') offRemote();
-        };
-      }, 'kana shortcuts: session status dots');
+          refreshBoard();
+        }));
+        child.effect(() => () => { if (typeof offRemote === 'function') offRemote(); }, 'kana shortcuts: api-session/error');
+      };
+      if (typeof ctx.inject === 'function') ctx.inject(['remote'], onRemote);
       const boardHint = (message) => {
         board.hint = message;
         publishBoard();

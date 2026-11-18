@@ -125,6 +125,7 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
     Promise, console, setTimeout, clearTimeout,
   };
   runInNewContext(source, context);
+  let remoteService;
   const ctx = {
     effect(factory) { disposed.push(factory()); },
     locale: { register() { return () => {}; }, bind() { return (key) => key; } },
@@ -166,7 +167,15 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
     } },
     workspaces: { list: { getSnapshot() { return workspaceList; },
       subscribe(listener) { workspaceListeners.add(listener); return () => workspaceListeners.delete(listener); } } },
-    get(name) { return name === 'conversation' ? { input: { for() { return focusedShell; } } } : undefined; },
+    get(name) { return name === 'conversation' ? { input: { for() { return focusedShell; } } }
+      : name === 'remote' ? remoteService : undefined; },
+    // 真实 cordis 用 ctx.inject 起子 fiber 等服务就绪；这里直接给一个带
+    // remote 的子上下文，等价于「remote 已经在了」。
+    inject(names, callback) {
+      assert.deepEqual([...names], ['remote']);
+      callback({ remote: remoteService, effect(factory) { disposed.push(factory()); } });
+      return { state: 2 };
+    },
     slots: { inject(name, register) {
         assert.ok(name === 'settings.section' || name === 'shell.overlay', name);
         return register();
@@ -198,8 +207,26 @@ function load({ mode = 'advanced', urlMode = null, runtime = 'desktop', platform
       entriesOfSlot(name) { return name === 'sidebar.panellist' ? sidebarPanels :
         name === 'main' ? [...mainPanels].map((key) => ({ options: { key } })) : []; } },
   };
-  plugin.apply(ctx);
-  return { commands, slots, actions, disposed, edits, catalog, document, observers, stateUpdates,
+  remoteService = ctx.remote;
+  // cordis 的 ctx 是代理：访问没声明 inject 的服务会直接抛错，而不是返回
+  // undefined。这里把访问过的名字记下来，测试据此核对 inject 声明。
+  // cordis 的 ctx 是代理：访问没声明 inject 的服务会**抛错**，而不是返回
+  // undefined，`?.` 也拦不住。这里照样抛，把这种加载期崩溃挡在测试里。
+  const accessed = new Set();
+  const tracked = new Proxy(ctx, {
+    get(target, prop, receiver) {
+      if (typeof prop === 'string') {
+        accessed.add(prop);
+        const core = prop === 'effect' || prop === 'get' || prop === 'inject';
+        if (!core && Object.hasOwn(target, prop) && !plugin.inject.includes(prop)) {
+          throw new Error(`cannot get property "${prop}" without inject`);
+        }
+      }
+      return Reflect.get(target, prop, receiver);
+    },
+  });
+  plugin.apply(tracked);
+  return { inject: plugin.inject, accessed, commands, slots, actions, disposed, edits, catalog, document, observers, stateUpdates,
     fixedInputs, frames, sidebarPanels, mainPanels, slotListeners, fixedRows, panelInfo,
     selected, selectedListeners, sessionList, sessionRows, listListeners, workspaceList, workspaceListeners,
     sessionStatus, statusListeners, remoteHandlers,
@@ -1334,5 +1361,19 @@ test('a conversation nobody touched for a day greys out, a fresh one does not', 
   environment.sessionStatus.set('s3', { running: false, completionUnread: true });
   for (const listener of environment.statusListeners) listener();
   assert.equal(dotsOf(environment).get('s3'), 'done');
+  for (const off of environment.disposed.reverse()) off();
+});
+
+test('every client service it touches is declared in inject', () => {
+  const environment = load();
+  visitBoard(environment, ['s1', 's2', 's3']);
+  // effect/get 是 cordis Context 自己的成员，不是需要 inject 的服务。
+  const core = new Set(['effect', 'get', 'inject']);
+  const touched = [...environment.accessed].filter((name) => !core.has(name));
+  for (const name of touched) {
+    assert.ok(environment.inject.includes(name), `客户端访问了没声明 inject 的服务：${name}`);
+  }
+  // 实时错误只能靠 remote，但它不该拖累激活，所以走 ctx.get 按需取。
+  assert.ok(environment.accessed.has('remote') === false, 'remote 必须用 ctx.get 取，不能直接访问');
   for (const off of environment.disposed.reverse()) off();
 });

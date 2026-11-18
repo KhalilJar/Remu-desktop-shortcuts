@@ -156,7 +156,7 @@ git clone https://github.com/KhalilJar/Remu-desktop-shortcuts.git
 | macOS / Linux Desktop | 按相应环境的桥接与快捷键校验能力尝试降级。 | 暂无真机验证；允许的组合和实际送达可能不同。 |
 | 普通 DSH Web（浏览器打开服务器上的 DSH） | 0.4.9 起注册会话速切、返回会话、聚焦输入框、功能页与**会话轮切板**（Windows 浏览器）；不再需要桌面桥。0.4.10 起轮切板能识别被系统抢走修饰位的 `Alt`、`Alt` 松开丢失时自动提交，功能页固定键为 `Ctrl+Alt+1～9`；0.4.11 起**免录制，直接按 `Alt+Q` 即可开板**，录制只写 DSH 能接受的 `Ctrl+Alt` 行。 | 浏览器不会出现「开发者工具」动作；`Ctrl+1～9` 属于浏览器自己的标签页快捷键，插件收不到；Firefox 会把单独的 `Alt` 交给自己的菜单，建议 Chrome/Edge。 |
 
-本地 **0.4.18** 通过 51 项单元测试，其中「会话轮切板」在 NEXT 2.0.22-next **与社区版 dsh-desktop** / Windows 均已获用户实机按键确认（含连续两次、反向键）；浏览器 DSH Web 由同一套测试覆盖（含「一条绑定都没存时 `Alt+Q` 仍开板」），但浏览器端的组合键未逐一实机验收。**这不等于其他模式、系统或全部键位都已验收**。插件依赖 DSH 的 `shortcuts`、`settings.section`、`shell.overlay`、会话、布局、工作区等客户端服务和部分页面结构；未来版本若改动这些接口，仍可能需要适配。
+本地 **0.4.19** 通过 52 项单元测试，其中「会话轮切板」在 NEXT 2.0.22-next **与社区版 dsh-desktop** / Windows 均已获用户实机按键确认（含连续两次、反向键）；浏览器 DSH Web 由同一套测试覆盖（含「一条绑定都没存时 `Alt+Q` 仍开板」），但浏览器端的组合键未逐一实机验收。**这不等于其他模式、系统或全部键位都已验收**。插件依赖 DSH 的 `shortcuts`、`settings.section`、`shell.overlay`、会话、布局、工作区等客户端服务和部分页面结构；未来版本若改动这些接口，仍可能需要适配。
 
 ### 如果官方后来内置了同样的功能？
 
@@ -173,6 +173,11 @@ git clone https://github.com/KhalilJar/Remu-desktop-shortcuts.git
 想参与本地验证：在仓库根目录安装 Node.js 后运行 `node --test test/client.test.mjs`（`--test` 使用 Node 自带测试运行器；若你的终端不允许子进程，可直接运行 `node test/client.test.mjs`）；`node --check client.js` 只检查语法，不改你的键位。测试通过不等于你那台机器上的按键一定能触发，最有价值的反馈仍然来自真实使用。
 
 ## 更新日志
+
+### 0.4.19
+
+- 修复 0.4.18 在真实 DSH Web 里整块加载失败（`web boot: 1 entry did not activate`）：0.4.18 直接读 `ctx.remote` 收实时错误，但 `remote` 没写进 `inject`，Cordis 的 ctx 代理会**抛错**（`cannot get property "remote" without inject`），`?.` 拦不住，整个插件停在未激活。现在改用 `ctx.inject(['remote'], …)`：服务就绪后再订阅，缺它也只是少一个红点，不会拖垮加载；所有订阅统一包 try/catch。
+- 新增一条回归测试：模拟 Cordis 的抛错代理，扫出插件真正访问过的客户端服务，逐一核对是否都在 `inject` 里；少声明就直接失败。
 
 ### 0.4.18
 
